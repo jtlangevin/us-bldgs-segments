@@ -15,3 +15,10 @@ __pycache__/
 # OS Files
 .DS_Store
 Thumbs.db
+
+# Raw AHS Microdata (Too large for GitHub)
+data/household.csv
+data/project.csv
+
+# Ignore zip archives if you downloaded them directly to the repo
+*.zip
