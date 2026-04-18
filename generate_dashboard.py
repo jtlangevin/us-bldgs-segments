@@ -24,6 +24,24 @@ VALID_STATES = {
     'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'
 }
 
+STATE_NAME_TO_ABBR = {
+    'Alabama': 'AL', 'Alaska': 'AK', 'Arizona': 'AZ', 'Arkansas': 'AR',
+    'California': 'CA', 'Colorado': 'CO', 'Connecticut': 'CT',
+    'Delaware': 'DE', 'Florida': 'FL', 'Georgia': 'GA', 'Hawaii': 'HI',
+    'Idaho': 'ID', 'Illinois': 'IL', 'Indiana': 'IN', 'Iowa': 'IA',
+    'Kansas': 'KS', 'Kentucky': 'KY', 'Louisiana': 'LA', 'Maine': 'ME',
+    'Maryland': 'MD', 'Massachusetts': 'MA', 'Michigan': 'MI',
+    'Minnesota': 'MN', 'Mississippi': 'MS', 'Missouri': 'MO',
+    'Montana': 'MT', 'Nebraska': 'NE', 'Nevada': 'NV',
+    'New Hampshire': 'NH', 'New Jersey': 'NJ', 'New Mexico': 'NM',
+    'New York': 'NY', 'North Carolina': 'NC', 'North Dakota': 'ND',
+    'Ohio': 'OH', 'Oklahoma': 'OK', 'Oregon': 'OR', 'Pennsylvania': 'PA',
+    'Rhode Island': 'RI', 'South Carolina': 'SC', 'South Dakota': 'SD',
+    'Tennessee': 'TN', 'Texas': 'TX', 'Utah': 'UT', 'Vermont': 'VT',
+    'Virginia': 'VA', 'Washington': 'WA', 'West Virginia': 'WV',
+    'Wisconsin': 'WI', 'Wyoming': 'WY', 'District of Columbia': 'DC'
+}
+
 CENSUS_DIVISIONS = {
     'Pacific': ['CA', 'OR', 'WA', 'HI', 'AK'],
     'West South Central': ['TX', 'OK', 'AR', 'LA'],
@@ -59,13 +77,11 @@ CSS_STYLES = f"""
         font-family: {GITHUB_FONT}; margin: 0; padding: 0;
         background-color: #f9f9f9; color: #24292f;
     }}
-
     .container {{ padding: 20px; max-width: 1400px; margin: auto; }}
     .container-wide {{
         padding: 20px 40px; max-width: 98%; margin: auto;
         box-sizing: border-box;
     }}
-
     .map-grid {{
         display: flex; flex-wrap: wrap; justify-content: center;
         gap: 20px; margin-bottom: 20px;
@@ -75,7 +91,6 @@ CSS_STYLES = f"""
         padding: 15px; border-radius: 8px;
         box-shadow: 0 2px 4px rgba(0,0,0,0.1); box-sizing: border-box;
     }}
-
     .chart-row {{
         display: flex; flex-wrap: wrap; justify-content: space-between;
         margin-bottom: 40px; background: white; padding: 20px;
@@ -83,11 +98,9 @@ CSS_STYLES = f"""
         box-sizing: border-box;
     }}
     .chart-container {{ flex: 0 0 32%; box-sizing: border-box; }}
-
     @media (max-width: 900px) {{
         .chart-container {{ flex: 0 0 100%; margin-bottom: 20px; }}
     }}
-
     .nav-menu, .nav-menu ul {{ list-style: none; margin: 0; padding: 0; }}
     .nav-menu {{ background-color: #24292f; display: flex; }}
     .nav-menu > li {{ position: relative; }}
@@ -128,24 +141,37 @@ CSS_STYLES = f"""
         opacity: 1; z-index: 1;
     }}
 
-    @keyframes smoothLoad {{
-        0% {{ opacity: 0; }}
-        100% {{ opacity: 1; }}
-    }}
+    @keyframes smoothLoad {{ 0% {{ opacity: 0; }} 100% {{ opacity: 1; }} }}
     .fade-in-section {{
-        opacity: 0;
-        animation: smoothLoad 0.4s ease-out forwards;
+        opacity: 0; animation: smoothLoad 0.4s ease-out forwards;
         animation-delay: 0.2s;
     }}
 
-    /* Anti-snap Logic: Charts start hidden and fade in when resized */
-    .plotly-graph-div {{
-        opacity: 0;
-        transition: opacity 0.4s ease-in-out;
+    .plotly-graph-div {{ opacity: 0; transition: opacity 0.4s ease-in-out; }}
+    .ready .plotly-graph-div {{ opacity: 1 !important; }}
+
+    .toggle-container {{
+        margin: 20px 0; display: flex; align-items: center;
+        justify-content: center; gap: 10px;
     }}
-    .ready .plotly-graph-div {{
-        opacity: 1 !important;
+    .switch {{
+        position: relative; display: inline-block;
+        width: 50px; height: 26px;
     }}
+    .switch input {{ opacity: 0; width: 0; height: 0; }}
+    .slider {{
+        position: absolute; cursor: pointer; top: 0; left: 0;
+        right: 0; bottom: 0; background-color: #ccc;
+        transition: .4s; border-radius: 34px;
+    }}
+    .slider:before {{
+        position: absolute; content: ""; height: 18px; width: 18px;
+        left: 4px; bottom: 4px; background-color: white;
+        transition: .4s; border-radius: 50%;
+    }}
+    input:checked + .slider {{ background-color: #0969da; }}
+    input:checked + .slider:before {{ transform: translateX(24px); }}
+    .toggle-label {{ font-size: 14px; font-weight: 600; color: #57606a; }}
 """
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -161,36 +187,56 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <h1 style="text-align: center;">{page_title} Segment Projections</h1>
 
         <div class="tab-container">
-            <button class="tab-btn" onclick="openTab(event, 'Energy')">Energy Use</button>
-            <button class="tab-btn" onclick="openTab(event, 'PeakDemand')">Peak Demand</button>
-            <button class="tab-btn" onclick="openTab(event, 'Emissions')">Emissions</button>
-            <button class="tab-btn" onclick="openTab(event, 'CapCost')">Capital Cost</button>
-            <button class="tab-btn" onclick="openTab(event, 'EnergyCost')">Energy Cost</button>
+            <button class="tab-btn" onclick="openTab(event, 'Energy')">
+                Energy Use
+            </button>
+            <button class="tab-btn" onclick="openTab(event, 'PeakDemand')">
+                Peak Demand
+            </button>
+            <button class="tab-btn" onclick="openTab(event, 'Emissions')">
+                Emissions
+            </button>
+            <button class="tab-btn" onclick="openTab(event, 'CapCost')">
+                Capital Cost
+            </button>
+            <button class="tab-btn" onclick="openTab(event, 'EnergyCost')">
+                Energy Cost
+            </button>
         </div>
 
         <div class="tabs-wrapper fade-in-section">
             <div id="Energy" class="tab-content">
-                <h2 style="text-align: center; font-weight: 400;">Energy Use (TBtu)</h2>
+                <h2 style="text-align: center; font-weight: 400;">
+                    Energy Use (TBtu)
+                </h2>
                 <div class="chart-row">{energy_charts_html}</div>
             </div>
 
             <div id="PeakDemand" class="tab-content">
-                <h2 style="text-align: center; font-weight: 400;">Peak Demand (GW)</h2>
+                <h2 style="text-align: center; font-weight: 400;">
+                    Peak Demand (GW)
+                </h2>
                 <div class="chart-row">{peak_charts_html}</div>
             </div>
 
             <div id="Emissions" class="tab-content">
-                <h2 style="text-align: center; font-weight: 400;">Emissions (MTCO2e)</h2>
+                <h2 style="text-align: center; font-weight: 400;">
+                    Emissions (MTCO2e)
+                </h2>
                 <div class="chart-row">{emissions_charts_html}</div>
             </div>
 
             <div id="CapCost" class="tab-content">
-                <h2 style="text-align: center; font-weight: 400;">Capital Cost (M$)</h2>
+                <h2 style="text-align: center; font-weight: 400;">
+                    Capital Cost (M$)
+                </h2>
                 <div class="chart-row">{cap_cost_charts_html}</div>
             </div>
 
             <div id="EnergyCost" class="tab-content">
-                <h2 style="text-align: center; font-weight: 400;">Energy Cost (M$)</h2>
+                <h2 style="text-align: center; font-weight: 400;">
+                    Energy Cost (M$)
+                </h2>
                 <div class="chart-row">{energy_cost_charts_html}</div>
             </div>
         </div>
@@ -263,23 +309,67 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
 <body>
     {nav_bar_html}
     <div class="container-wide">
-        <h1 style="text-align: center; margin-bottom: 40px;">US Buildings Current Snapshot</h1>
+        <h1 style="text-align: center; margin-bottom: 20px;">
+            US Buildings Current Snapshot
+        </h1>
+
+        <div class="toggle-container">
+            <span class="toggle-label">Absolute View</span>
+            <label class="switch">
+                <input type="checkbox" id="mode-toggle" onchange="updateMode()">
+                <span class="slider"></span>
+            </label>
+            <span class="toggle-label">Per Capita View</span>
+        </div>
 
         <div class="fade-in-section">
             <div class="map-grid">
-                <div class="map-box" data-tab="Energy">{map_energy}</div>
-                <div class="map-box" data-tab="PeakDemand">{map_peak}</div>
-                <div class="map-box" data-tab="Emissions">{map_emissions}</div>
+                <div class="map-box" data-tab="Energy">
+                    <div class="abs-map">{map_energy}</div>
+                    <div class="pc-map" style="display:none">{map_energy_pc}</div>
+                </div>
+                <div class="map-box" data-tab="PeakDemand">
+                    <div class="abs-map">{map_peak}</div>
+                    <div class="pc-map" style="display:none">{map_peak_pc}</div>
+                </div>
+                <div class="map-box" data-tab="Emissions">
+                    <div class="abs-map">{map_emissions}</div>
+                    <div class="pc-map" style="display:none">{map_emissions_pc}</div>
+                </div>
             </div>
 
             <div class="map-grid">
-                <div class="map-box" data-tab="CapCost">{map_capcost}</div>
-                <div class="map-box" data-tab="EnergyCost">{map_energycost}</div>
+                <div class="map-box" data-tab="CapCost">
+                    <div class="abs-map">{map_capcost}</div>
+                    <div class="pc-map" style="display:none">{map_capcost_pc}</div>
+                </div>
+                <div class="map-box" data-tab="EnergyCost">
+                    <div class="abs-map">{map_energycost}</div>
+                    <div class="pc-map" style="display:none">{map_energycost_pc}</div>
+                </div>
             </div>
         </div>
     </div>
 
     <script>
+        function updateMode() {{
+            const isPC = document.getElementById('mode-toggle').checked;
+            document.querySelectorAll('.abs-map').forEach(
+                el => el.style.display = isPC ? 'none' : 'block'
+            );
+            document.querySelectorAll('.pc-map').forEach(
+                el => el.style.display = isPC ? 'block' : 'none'
+            );
+
+            const query = isPC ? '.pc-map' : '.abs-map';
+            document.querySelectorAll(query).forEach(container => {{
+                const plot = container.querySelector('.plotly-graph-div');
+                if (plot && plot.layout) {{
+                    Plotly.Plots.resize(plot);
+                }}
+            }});
+        }}
+
         const ro = new ResizeObserver(entries => {{
             entries.forEach(entry => {{
                 const plot = entry.target.querySelector('.plotly-graph-div');
@@ -292,16 +382,21 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         }});
 
         window.addEventListener('load', function() {{
-            document.querySelectorAll('.map-box').forEach(box => {{
-                ro.observe(box);
-                const plot = box.querySelector('.plotly-graph-div');
-                if (plot) {{
-                    plot.on('plotly_click', function(data){{
-                        let state = data.points[0].location;
-                        let targetTab = box.getAttribute('data-tab');
-                        window.location.href = state + '.html#' + targetTab;
-                    }});
-                }}
+            document.querySelectorAll('.abs-map, .pc-map').forEach(container => {{
+                ro.observe(container);
+
+                const checkPlot = setInterval(() => {{
+                    const plot = container.querySelector('.plotly-graph-div');
+                    if (plot && plot.on) {{
+                        clearInterval(checkPlot);
+                        plot.on('plotly_click', function(data) {{
+                            let state = data.points[0].location;
+                            let targetBox = container.closest('.map-box');
+                            let targetTab = targetBox.getAttribute('data-tab');
+                            window.location.href = state + '.html#' + targetTab;
+                        }});
+                    }}
+                }}, 100);
             }});
         }});
     </script>
@@ -311,8 +406,52 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
 
 
 # ---------------------------------------------------------
-# API & Local Data Handling
+# API Handlers
 # ---------------------------------------------------------
+
+def fetch_state_population(census_key, target_year):
+    """
+    Fetches official state populations from Census API, dynamically
+    stepping backwards in years to match the most recent EIA data.
+    """
+    if not census_key:
+        print(
+            "[WARNING] Census API Key missing. "
+            "Using fallback population of 5,000,000."
+        )
+        return pd.DataFrame([
+            {'Region': st, 'Population': 5_000_000} for st in VALID_STATES
+        ])
+
+    year = target_year
+    while year >= 2021:
+        url = f"https://api.census.gov/data/{year}/pep/population"
+        params = {"get": f"POP_{year},NAME", "for": "state:*", "key": census_key}
+        try:
+            resp = requests.get(url, params=params, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                df = pd.DataFrame(data[1:], columns=data[0])
+                df.rename(
+                    columns={f"POP_{year}": "Population", "NAME": "StateName"},
+                    inplace=True
+                )
+                df['Population'] = pd.to_numeric(df['Population'])
+                df['Region'] = df['StateName'].map(STATE_NAME_TO_ABBR)
+                print(f"Successfully fetched Census population for {year}.")
+                return df[['Region', 'Population']].dropna()
+        except Exception:
+            pass
+
+        print(f"Census data for {year} unavailable. Trying {year - 1}...")
+        year -= 1
+
+    print("[ERROR] Exhausted Census years. Using fallback population.")
+    return pd.DataFrame([
+        {'Region': st, 'Population': 5_000_000} for st in VALID_STATES
+    ])
+
+
 def find_latest_eia_861_year():
     """
     Finds the latest available EIA-861 data year by dynamically checking
@@ -327,7 +466,8 @@ def find_latest_eia_861_year():
         ]
         for url in urls:
             try:
-                with requests.get(url, headers=headers, stream=True, timeout=5) as r:
+                resp = requests.get(url, headers=headers, stream=True, timeout=5)
+                with resp as r:
                     if r.status_code == 200:
                         chunk = r.raw.read(2)
                         if chunk == b'PK':
@@ -340,7 +480,7 @@ def find_latest_eia_861_year():
 
 def extract_peak_data_zip(year):
     """
-    Extracts True Peak Demand directly from the operational_data Excel file
+    Extracts True Peak Demand directly from the operational_data Excel file.
     """
     urls = [
         f"https://www.eia.gov/electricity/data/eia861/zip/f861{year}.zip",
@@ -375,7 +515,6 @@ def extract_peak_data_zip(year):
             if not target:
                 return pd.DataFrame(columns=['Region', 'Peak_Demand_GW'])
 
-            # Hunt for the multi-row header start
             df_top = pd.read_excel(z.open(target), header=None, nrows=15)
             mask = df_top.apply(
                 lambda row: row.astype(str).str.contains(
@@ -385,7 +524,6 @@ def extract_peak_data_zip(year):
             )
             header_start = mask.idxmax()
 
-            # Read headers and flatten
             df_h = pd.read_excel(
                 z.open(target), header=None, skiprows=header_start, nrows=3
             )
@@ -399,7 +537,6 @@ def extract_peak_data_zip(year):
                 )
                 flat_cols.append(combined)
 
-            # Read the actual data
             df_raw = pd.read_excel(
                 z.open(target), skiprows=header_start + 3, header=None
             )
@@ -412,14 +549,16 @@ def extract_peak_data_zip(year):
                 return None
 
             idx_st = find_idx(['state'])
-            idx_sum = find_idx(['summer', 'peak']) or find_idx(
-                ['summer', 'demand']
-            ) or find_idx(['summer', 'max'])
 
-            if None in [idx_st, idx_sum]:
+            idx_sum = find_idx(['summer', 'peak'])
+            if idx_sum is None:
+                idx_sum = find_idx(['summer', 'demand'])
+            if idx_sum is None:
+                idx_sum = find_idx(['summer', 'max'])
+
+            if idx_st is None or idx_sum is None:
                 return pd.DataFrame(columns=['Region', 'Peak_Demand_GW'])
 
-            # Build DataFrame using exact logic from master.py
             df_peak = pd.DataFrame({
                 'State': df_raw.iloc[:, idx_st].astype(str).str.strip().str.upper(),
                 'Peak_MW': pd.to_numeric(
@@ -427,7 +566,6 @@ def extract_peak_data_zip(year):
                 ).fillna(0)
             })
 
-            # Filter to valid states and aggregate to GW
             df_peak = df_peak[df_peak['State'].isin(VALID_STATES)]
             state_peak = df_peak.groupby('State')['Peak_MW'].sum().reset_index()
             state_peak['Peak_Demand_GW'] = state_peak['Peak_MW'] / 1000.0
@@ -440,10 +578,10 @@ def extract_peak_data_zip(year):
         return pd.DataFrame(columns=['Region', 'Peak_Demand_GW'])
 
 
-def fetch_live_home_page_data(eia_key):
+def fetch_live_home_page_data(eia_key, census_key):
     """
-    Pulls live SEDS data via API, extracts true Peak Demand from ZIPs,
-    and merges with local AHS Census Division data.
+    Pulls live SEDS data via API, extracts Peak Demand from ZIPs,
+    matches Census data dynamically, and calculates normalized metrics.
     """
     if not eia_key:
         raise RuntimeError("EIA_API_KEY missing. Cannot fetch live map data.")
@@ -457,7 +595,6 @@ def fetch_live_home_page_data(eia_key):
             "frequency": "annual",
             "data": ["value"],
             "facets": {
-                # Added TERCE and TECCE for official Carbon Dioxide Emissions (MMTCO2e)
                 "seriesId": ["TERCB", "TECCB", "TERCV", "TECCV", "TERCE", "TECCE"]
             },
             "sort": [{"column": "period", "direction": "desc"}],
@@ -478,16 +615,25 @@ def fetch_live_home_page_data(eia_key):
 
         if not seds_df.empty:
             seds_df.columns = seds_df.columns.str.lower()
+            seds_df['seriesid'] = seds_df['seriesid'].astype(str).str.upper()
             seds_df['value'] = pd.to_numeric(seds_df['value'], errors='coerce')
+            seds_df = seds_df.sort_values('period', ascending=False)
+            seds_df = seds_df.drop_duplicates(
+                subset=['stateid', 'seriesid'], keep='first'
+            )
 
-            latest_year = seds_df['period'].max()
-            seds_df = seds_df[seds_df['period'] == latest_year]
+            try:
+                # Find the most commonly occurring year to sync Census against
+                seds_year = int(seds_df['period'].mode()[0])
+            except (ValueError, TypeError, IndexError):
+                seds_year = 2022
 
             seds_grouped = (
                 seds_df.groupby(['stateid', 'seriesid'])['value']
                 .sum().unstack(fill_value=0).reset_index()
             )
             seds_grouped.rename(columns={'stateid': 'Region'}, inplace=True)
+            seds_grouped['Region'] = seds_grouped['Region'].str.upper()
 
             eng_total = (
                 seds_grouped.get('TERCB', 0) + seds_grouped.get('TECCB', 0)
@@ -499,12 +645,12 @@ def fetch_live_home_page_data(eia_key):
             )
             seds_grouped['Energy_Cost_M$'] = cost_total
 
-            # THE FIX: Pull highly accurate true emissions from the EIA
             emi_total = (
                 seds_grouped.get('TERCE', 0) + seds_grouped.get('TECCE', 0)
             )
             seds_grouped['Emissions_MMTCO2e'] = emi_total
         else:
+            seds_year = 2022
             seds_grouped = pd.DataFrame(
                 columns=['Region', 'Energy_Use_TBtu', 'Emissions_MMTCO2e',
                          'Energy_Cost_M$']
@@ -526,9 +672,12 @@ def fetch_live_home_page_data(eia_key):
             ahs_df = pd.read_csv(ahs_path)
             for _, row in ahs_df.iterrows():
 
-                raw_div = str(row.get('DIVISION', '')).replace("'", "").replace('"', '').strip()
+                raw_div = str(
+                    row.get('DIVISION', '')
+                ).replace("'", "").replace('"', '').strip()
                 raw_cost = str(
-                    row.get('Capital_Cost_M$', 0)).replace("'", "").replace('"', '').strip()
+                    row.get('Capital_Cost_M$', 0)
+                ).replace("'", "").replace('"', '').strip()
 
                 try:
                     div_code = str(int(float(raw_div)))
@@ -554,8 +703,16 @@ def fetch_live_home_page_data(eia_key):
 
         state_cap_df = pd.DataFrame(expanded_rows)
 
-        # Merge everything for final output
-        map_df_all = seds_grouped.merge(state_peak_df, on='Region', how='left')
+        # 4. Dynamically Fetch Matching Population Data
+        # ---------------------------------------------------------
+        target_year = max(seds_year, peak_year)
+        pop_df = fetch_state_population(census_key, target_year)
+
+        # 5. Merge everything for final output
+        # ---------------------------------------------------------
+        map_df_all = pd.DataFrame(list(VALID_STATES), columns=['Region'])
+        map_df_all = map_df_all.merge(seds_grouped, on='Region', how='left')
+        map_df_all = map_df_all.merge(state_peak_df, on='Region', how='left')
 
         if not state_cap_df.empty:
             map_df_all = map_df_all.merge(
@@ -563,8 +720,37 @@ def fetch_live_home_page_data(eia_key):
             )
         else:
             map_df_all['Capital_Cost_M$'] = 0.0
+            map_df_all['Division_Name'] = "Unknown Division"
 
+        map_df_all = map_df_all.merge(pop_df, on='Region', how='left')
         map_df_all = map_df_all.fillna(0)
+
+        # Ensure Population is safely > 0 for division math
+        map_df_all.loc[map_df_all['Population'] == 0, 'Population'] = 1
+
+        # Calculate Normalized Values
+        map_df_all['Energy_pc'] = (
+            map_df_all['Energy_Use_TBtu'] * 1_000_000
+        ) / map_df_all['Population']
+        map_df_all['Peak_pc'] = (
+            map_df_all['Peak_Demand_GW'] * 1_000_000
+        ) / map_df_all['Population']
+        map_df_all['Emissions_pc'] = (
+            map_df_all['Emissions_MMTCO2e'] * 1_000_000
+        ) / map_df_all['Population']
+        map_df_all['Cost_pc'] = (
+            map_df_all['Energy_Cost_M$'] * 1_000_000
+        ) / map_df_all['Population']
+
+        # Normalizing Regional Capital Cost by Regional Population
+        div_pop = map_df_all.groupby(
+            'Division_Name'
+        )['Population'].transform('sum')
+        div_pop = div_pop.replace(0, 1)
+        map_df_all['CapCost_pc'] = (
+            map_df_all['Capital_Cost_M$'] * 1_000_000
+        ) / div_pop
+
         map_df_all = map_df_all[map_df_all['Region'].isin(VALID_STATES)]
 
         return map_df_all
@@ -733,12 +919,13 @@ def generate_sunburst_row(df_subset, metric_col, path_cols, color_dict=None):
 def main():
     load_dotenv()
     eia_key = os.environ.get('EIA_API_KEY')
+    census_key = os.environ.get('CENSUS_API_KEY')
 
     output_dir = "docs"
     os.makedirs(output_dir, exist_ok=True)
 
     # Fetch strictly live map data
-    map_df_all = fetch_live_home_page_data(eia_key)
+    map_df_all = fetch_live_home_page_data(eia_key, census_key)
 
     # Note: State Detail pages still use synthetic dummy data
     df = create_dummy_data()
@@ -793,7 +980,7 @@ def main():
     print("Generating Multi-Panel Home page...")
     if not map_df_all.empty:
 
-        def generate_map_panel(data, metric, title, is_ahs=False):
+        def generate_map_panel(data, metric, title, is_ahs=False, fmt=",.1f"):
             fig = px.choropleth(
                 data, locations='Region', locationmode="USA-states",
                 color=metric, scope="usa", title=title,
@@ -809,11 +996,13 @@ def main():
                     customdata=data[['Division_Name']],
                     hovertemplate=(
                         "<b>%{location} (%{customdata[0]})</b><br>" +
-                        title + ": %{z:,.1f}<extra></extra>")
+                        title + ": %{z:" + fmt + "}<extra></extra>")
                 )
             else:
                 fig.update_traces(
-                    hovertemplate="<b>%{location}</b><br>" + title + ": %{z:,.1f}<extra></extra>"
+                    hovertemplate=(
+                        "<b>%{location}</b><br>" +
+                        title + ": %{z:" + fmt + "}<extra></extra>")
                 )
 
             fig.update_layout(
@@ -828,6 +1017,7 @@ def main():
                 config={'responsive': True}
             )
 
+        # Standard Absolute Data Maps
         map_eng = generate_map_panel(
             map_df_all, 'Energy_Use_TBtu', "Energy Use (TBtu)"
         )
@@ -838,16 +1028,38 @@ def main():
             map_df_all, 'Emissions_MMTCO2e', "Emissions (MMTCO2e)"
         )
         map_cap = generate_map_panel(
-            map_df_all, 'Capital_Cost_M$', "Capital Expenditures (M$)", is_ahs=True
+            map_df_all, 'Capital_Cost_M$', "Capital Expenditures (M$)",
+            is_ahs=True
         )
         map_enc = generate_map_panel(
             map_df_all, 'Energy_Cost_M$', "Energy Cost (M$)"
         )
 
+        # Per Capita Data Maps
+        map_eng_pc = generate_map_panel(
+            map_df_all, 'Energy_pc', "Energy (MMBtu/Capita)", fmt=",.0f"
+        )
+        map_peak_pc = generate_map_panel(
+            map_df_all, 'Peak_pc', "Peak Demand (kW/Capita)", fmt=",.2f"
+        )
+        map_emi_pc = generate_map_panel(
+            map_df_all, 'Emissions_pc', "Emissions (MTCO2e/Capita)", fmt=",.1f"
+        )
+        map_cap_pc = generate_map_panel(
+            map_df_all, 'CapCost_pc', "CapEx ($/Capita)",
+            is_ahs=True, fmt="$,.0f"
+        )
+        map_enc_pc = generate_map_panel(
+            map_df_all, 'Cost_pc', "Energy Cost ($/Capita)", fmt="$,.0f"
+        )
+
         final_idx_html = INDEX_TEMPLATE.format(
             css_styles=CSS_STYLES, nav_bar_html=dynamic_navbar,
-            map_energy=map_eng, map_peak=map_peak, map_emissions=map_emi,
-            map_capcost=map_cap, map_energycost=map_enc
+            map_energy=map_eng, map_energy_pc=map_eng_pc,
+            map_peak=map_peak, map_peak_pc=map_peak_pc,
+            map_emissions=map_emi, map_emissions_pc=map_emi_pc,
+            map_capcost=map_cap, map_capcost_pc=map_cap_pc,
+            map_energycost=map_enc, map_energycost_pc=map_enc_pc
         )
 
         with open(os.path.join(output_dir, "index.html"), "w") as f:
