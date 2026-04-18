@@ -98,9 +98,11 @@ CSS_STYLES = f"""
         box-sizing: border-box;
     }}
     .chart-container {{ flex: 0 0 32%; box-sizing: border-box; }}
+
     @media (max-width: 900px) {{
         .chart-container {{ flex: 0 0 100%; margin-bottom: 20px; }}
     }}
+
     .nav-menu, .nav-menu ul {{ list-style: none; margin: 0; padding: 0; }}
     .nav-menu {{ background-color: #24292f; display: flex; }}
     .nav-menu > li {{ position: relative; }}
@@ -172,6 +174,16 @@ CSS_STYLES = f"""
     input:checked + .slider {{ background-color: #0969da; }}
     input:checked + .slider:before {{ transform: translateX(24px); }}
     .toggle-label {{ font-size: 14px; font-weight: 600; color: #57606a; }}
+
+    /* ANTI-SNAP CSS CLASSES FOR MAP TOGGLE */
+    .map-hidden {{
+        height: 0; overflow: hidden; opacity: 0;
+        pointer-events: none; visibility: hidden;
+    }}
+    .map-visible {{
+        height: auto; opacity: 1;
+        pointer-events: auto; visibility: visible;
+    }}
 """
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -325,27 +337,27 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         <div class="fade-in-section">
             <div class="map-grid">
                 <div class="map-box" data-tab="Energy">
-                    <div class="abs-map">{map_energy}</div>
-                    <div class="pc-map" style="display:none">{map_energy_pc}</div>
+                    <div class="abs-map map-visible">{map_energy}</div>
+                    <div class="pc-map map-hidden">{map_energy_pc}</div>
                 </div>
                 <div class="map-box" data-tab="PeakDemand">
-                    <div class="abs-map">{map_peak}</div>
-                    <div class="pc-map" style="display:none">{map_peak_pc}</div>
+                    <div class="abs-map map-visible">{map_peak}</div>
+                    <div class="pc-map map-hidden">{map_peak_pc}</div>
                 </div>
                 <div class="map-box" data-tab="Emissions">
-                    <div class="abs-map">{map_emissions}</div>
-                    <div class="pc-map" style="display:none">{map_emissions_pc}</div>
+                    <div class="abs-map map-visible">{map_emissions}</div>
+                    <div class="pc-map map-hidden">{map_emissions_pc}</div>
                 </div>
             </div>
 
             <div class="map-grid">
                 <div class="map-box" data-tab="CapCost">
-                    <div class="abs-map">{map_capcost}</div>
-                    <div class="pc-map" style="display:none">{map_capcost_pc}</div>
+                    <div class="abs-map map-visible">{map_capcost}</div>
+                    <div class="pc-map map-hidden">{map_capcost_pc}</div>
                 </div>
                 <div class="map-box" data-tab="EnergyCost">
-                    <div class="abs-map">{map_energycost}</div>
-                    <div class="pc-map" style="display:none">{map_energycost_pc}</div>
+                    <div class="abs-map map-visible">{map_energycost}</div>
+                    <div class="pc-map map-hidden">{map_energycost_pc}</div>
                 </div>
             </div>
         </div>
@@ -354,12 +366,13 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     <script>
         function updateMode() {{
             const isPC = document.getElementById('mode-toggle').checked;
-            document.querySelectorAll('.abs-map').forEach(
-                el => el.style.display = isPC ? 'none' : 'block'
-            );
-            document.querySelectorAll('.pc-map').forEach(
-                el => el.style.display = isPC ? 'block' : 'none'
-            );
+            
+            document.querySelectorAll('.abs-map').forEach(el => {{
+                el.className = isPC ? 'abs-map map-hidden' : 'abs-map map-visible';
+            }});
+            document.querySelectorAll('.pc-map').forEach(el => {{
+                el.className = isPC ? 'pc-map map-visible' : 'pc-map map-hidden';
+            }});
 
             const query = isPC ? '.pc-map' : '.abs-map';
             document.querySelectorAll(query).forEach(container => {{
@@ -549,7 +562,7 @@ def extract_peak_data_zip(year):
                 return None
 
             idx_st = find_idx(['state'])
-
+            
             idx_sum = find_idx(['summer', 'peak'])
             if idx_sum is None:
                 idx_sum = find_idx(['summer', 'demand'])
@@ -617,13 +630,13 @@ def fetch_live_home_page_data(eia_key, census_key):
             seds_df.columns = seds_df.columns.str.lower()
             seds_df['seriesid'] = seds_df['seriesid'].astype(str).str.upper()
             seds_df['value'] = pd.to_numeric(seds_df['value'], errors='coerce')
+
             seds_df = seds_df.sort_values('period', ascending=False)
             seds_df = seds_df.drop_duplicates(
                 subset=['stateid', 'seriesid'], keep='first'
             )
 
             try:
-                # Find the most commonly occurring year to sync Census against
                 seds_year = int(seds_df['period'].mode()[0])
             except (ValueError, TypeError, IndexError):
                 seds_year = 2022
@@ -713,7 +726,7 @@ def fetch_live_home_page_data(eia_key, census_key):
         map_df_all = pd.DataFrame(list(VALID_STATES), columns=['Region'])
         map_df_all = map_df_all.merge(seds_grouped, on='Region', how='left')
         map_df_all = map_df_all.merge(state_peak_df, on='Region', how='left')
-
+        
         if not state_cap_df.empty:
             map_df_all = map_df_all.merge(
                 state_cap_df, on='Region', how='left'
@@ -724,7 +737,7 @@ def fetch_live_home_page_data(eia_key, census_key):
 
         map_df_all = map_df_all.merge(pop_df, on='Region', how='left')
         map_df_all = map_df_all.fillna(0)
-
+        
         # Ensure Population is safely > 0 for division math
         map_df_all.loc[map_df_all['Population'] == 0, 'Population'] = 1
 
