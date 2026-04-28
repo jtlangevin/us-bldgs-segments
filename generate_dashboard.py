@@ -2,7 +2,6 @@ import datetime
 import io
 import json
 import os
-import random
 import zipfile
 
 import pandas as pd
@@ -16,9 +15,10 @@ pd.set_option('future.no_silent_downcasting', True)
 # ---------------------------------------------------------
 # Constants and Configurations
 # ---------------------------------------------------------
+# Excludes 'AK' and 'HI' for now
 VALID_STATES = {
-    'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
-    'HI', 'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
+    'AL', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
+    'ID', 'IL', 'IN', 'IA', 'KS', 'KY', 'LA', 'ME', 'MD',
     'MA', 'MI', 'MN', 'MS', 'MO', 'MT', 'NE', 'NV', 'NH', 'NJ',
     'NM', 'NY', 'NC', 'ND', 'OH', 'OK', 'OR', 'PA', 'RI', 'SC',
     'SD', 'TN', 'TX', 'UT', 'VT', 'VA', 'WA', 'WV', 'WI', 'WY', 'DC'
@@ -43,9 +43,15 @@ STATE_NAME_TO_ABBR = {
 }
 
 CENSUS_DIVISIONS = {
-    'Pacific': ['CA', 'OR', 'WA', 'HI', 'AK'],
-    'West South Central': ['TX', 'OK', 'AR', 'LA'],
-    'New England': ['ME', 'NH', 'VT', 'MA', 'RI', 'CT']
+    'New England': ['CT', 'ME', 'MA', 'NH', 'RI', 'VT'],
+    'Middle Atlantic': ['NJ', 'NY', 'PA'],
+    'East North Central': ['IL', 'IN', 'MI', 'OH', 'WI'],
+    'West North Central': ['IA', 'KS', 'MN', 'MO', 'NE', 'ND', 'SD'],
+    'South Atlantic': ['DE', 'FL', 'GA', 'MD', 'NC', 'SC', 'VA', 'DC', 'WV'],
+    'East South Central': ['AL', 'KY', 'MS', 'TN'],
+    'West South Central': ['AR', 'LA', 'OK', 'TX'],
+    'Mountain': ['AZ', 'CO', 'ID', 'MT', 'NV', 'NM', 'UT', 'WY'],
+    'Pacific': ['CA', 'OR', 'WA']
 }
 
 CENSUS_AHS_MAPPING = {
@@ -57,7 +63,7 @@ CENSUS_AHS_MAPPING = {
     '6': ['AL', 'KY', 'MS', 'TN'],
     '7': ['AR', 'LA', 'OK', 'TX'],
     '8': ['AZ', 'CO', 'ID', 'MT', 'NV', 'NM', 'UT', 'WY'],
-    '9': ['AK', 'CA', 'HI', 'OR', 'WA']
+    '9': ['CA', 'OR', 'WA']
 }
 
 DIVISION_NAMES = {
@@ -105,7 +111,7 @@ CSS_STYLES = f"""
 
     .nav-menu, .nav-menu ul {{ list-style: none; margin: 0; padding: 0; }}
     .nav-menu {{ background-color: #24292f; display: flex; }}
-    .nav-menu > li {{ position: relative; }}
+    .nav-menu li {{ position: relative; }}
     .nav-menu a {{
         display: block; color: white; padding: 14px 16px;
         text-decoration: none; font-weight: 500;
@@ -132,15 +138,27 @@ CSS_STYLES = f"""
     .tab-btn:hover {{ background-color: #d0d7de; }}
     .tab-btn.active {{ background-color: #0969da; color: white; }}
 
-    .tabs-wrapper {{ position: relative; width: 100%; }}
-    .tab-content {{
-        position: absolute; top: 0; left: 0; width: 100%;
-        visibility: hidden; opacity: 0; transition: opacity 0.3s;
-        z-index: 0;
+    /* CSS GRID FOR PERFECT ZERO-SNAP LAYOUTS */
+    .tabs-wrapper, .stack-grid {{
+        display: grid;
+        grid-template-columns: 1fr;
+        width: 100%;
     }}
-    .tab-content.active {{
-        position: relative; visibility: visible;
-        opacity: 1; z-index: 1;
+    .tab-content, .stack-layer {{
+        grid-row: 1;
+        grid-column: 1;
+        visibility: hidden;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s ease;
+        z-index: 0;
+        min-width: 0; /* Prevents grid blowout */
+    }}
+    .tab-content.active, .stack-layer.active-layer {{
+        visibility: visible;
+        opacity: 1;
+        pointer-events: auto;
+        z-index: 1;
     }}
 
     @keyframes smoothLoad {{ 0% {{ opacity: 0; }} 100% {{ opacity: 1; }} }}
@@ -151,6 +169,32 @@ CSS_STYLES = f"""
 
     .plotly-graph-div {{ opacity: 0; transition: opacity 0.4s ease-in-out; }}
     .ready .plotly-graph-div {{ opacity: 1 !important; }}
+
+    /* SEGMENTED CONTROLS FOR FILTERS */
+    .segmented-control {{
+        display: inline-flex;
+        background-color: #ebecf0;
+        border-radius: 6px;
+        padding: 4px;
+    }}
+    .segmented-control input[type="radio"] {{
+        display: none;
+    }}
+    .segmented-control label {{
+        padding: 6px 16px;
+        cursor: pointer;
+        border-radius: 4px;
+        font-size: 14px;
+        font-weight: 500;
+        color: #57606a;
+        transition: background-color 0.2s, color 0.2s;
+        margin: 0;
+    }}
+    .segmented-control input[type="radio"]:checked + label {{
+        background-color: #ffffff;
+        color: #24292f;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }}
 
     .toggle-container {{
         margin: 20px 0; display: flex; align-items: center;
@@ -175,15 +219,20 @@ CSS_STYLES = f"""
     input:checked + .slider:before {{ transform: translateX(24px); }}
     .toggle-label {{ font-size: 14px; font-weight: 600; color: #57606a; }}
 
-    /* ANTI-SNAP CSS CLASSES FOR MAP TOGGLE */
-    .map-hidden {{
-        height: 0; overflow: hidden; opacity: 0;
-        pointer-events: none; visibility: hidden;
+    /* LOADING SPINNER */
+    #loader-overlay {{
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: #f9f9f9; z-index: 9999;
+        display: flex; flex-direction: column; justify-content: center;
+        align-items: center; transition: opacity 0.4s ease;
     }}
-    .map-visible {{
-        height: auto; opacity: 1;
-        pointer-events: auto; visibility: visible;
+    .spinner {{
+        border: 6px solid #ebecf0; border-top: 6px solid #0969da;
+        border-radius: 50%; width: 50px; height: 50px;
+        animation: spin 1s linear infinite;
     }}
+    @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+    .loader-hidden {{ opacity: 0; pointer-events: none; }}
 """
 
 HTML_TEMPLATE = """<!DOCTYPE html>
@@ -194,13 +243,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <style>{css_styles}</style>
 </head>
 <body>
+    <div id="loader-overlay">
+        <div class="spinner"></div>
+        <h2 style="color: #57606a; margin-top: 20px; font-weight: 400;">
+            Loading Projections...
+        </h2>
+    </div>
+
     {nav_bar_html}
     <div class="container">
         <h1 style="text-align: center;">{page_title} Segment Projections</h1>
 
         <div class="tab-container">
             <button class="tab-btn" onclick="openTab(event, 'Energy')">
-                Energy Use
+                Site Energy Use
             </button>
             <button class="tab-btn" onclick="openTab(event, 'PeakDemand')">
                 Peak Demand
@@ -219,35 +275,35 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         <div class="tabs-wrapper fade-in-section">
             <div id="Energy" class="tab-content">
                 <h2 style="text-align: center; font-weight: 400;">
-                    Energy Use (TBtu)
+                    Site Energy Use (TBtu)
                 </h2>
                 <div class="chart-row">{energy_charts_html}</div>
             </div>
 
             <div id="PeakDemand" class="tab-content">
                 <h2 style="text-align: center; font-weight: 400;">
-                    Peak Demand (GW)
+                    Peak Demand, Summer (GW)
                 </h2>
                 <div class="chart-row">{peak_charts_html}</div>
             </div>
 
             <div id="Emissions" class="tab-content">
                 <h2 style="text-align: center; font-weight: 400;">
-                    Emissions (MTCO2e)
+                    Emissions (CO2e)
                 </h2>
                 <div class="chart-row">{emissions_charts_html}</div>
             </div>
 
             <div id="CapCost" class="tab-content">
                 <h2 style="text-align: center; font-weight: 400;">
-                    Capital Cost (M$)
+                    Capital Cost (Bn.$)
                 </h2>
                 <div class="chart-row">{cap_cost_charts_html}</div>
             </div>
 
             <div id="EnergyCost" class="tab-content">
                 <h2 style="text-align: center; font-weight: 400;">
-                    Energy Cost (M$)
+                    Energy Cost (Bn.$)
                 </h2>
                 <div class="chart-row">{energy_cost_charts_html}</div>
             </div>
@@ -290,6 +346,38 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             window.dispatchEvent(new Event('resize'));
         }}
 
+        function updateSunburstFilters(element) {{
+            const container = element.closest('.tab-content');
+
+            const sectorChecked = container.querySelector(
+                'input[name^="sector-"]:checked'
+            );
+            const sector = sectorChecked ? sectorChecked.value : 'all';
+
+            const unknownChecked = container.querySelector(
+                'input[name^="unknown-"]:checked'
+            );
+            const unknown = unknownChecked ? unknownChecked.value : 'inc';
+
+            const targetClass = 'view-' + sector + '-' + unknown;
+
+            container.querySelectorAll('.sunburst-view').forEach(el => {{
+                if (el.classList.contains(targetClass)) {{
+                    el.classList.add('active-layer');
+                }} else {{
+                    el.classList.remove('active-layer');
+                }}
+            }});
+
+            // Nudge Plotly to perfectly fit the freshly visible layer
+            container.querySelectorAll('.active-layer .plotly-graph-div').forEach(plot => {{
+                if (plot && plot.layout) {{
+                    Plotly.Plots.resize(plot);
+                }}
+            }});
+        }}
+
+        // Reinstated the ResizeObserver to ensure initial load bounding boxes are flawless
         const ro = new ResizeObserver(entries => {{
             entries.forEach(entry => {{
                 const plot = entry.target.querySelector('.plotly-graph-div');
@@ -302,6 +390,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         }});
 
         window.addEventListener('load', function() {{
+            const loader = document.getElementById('loader-overlay');
+            if (loader) {{
+                loader.classList.add('loader-hidden');
+                setTimeout(() => loader.style.display = 'none', 400);
+            }}
+
+            // Start observing all chart containers immediately
             document.querySelectorAll('.chart-container').forEach(container => {{
                 ro.observe(container);
             }});
@@ -319,6 +414,13 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     <style>{css_styles}</style>
 </head>
 <body>
+    <div id="loader-overlay">
+        <div class="spinner"></div>
+        <h2 style="color: #57606a; margin-top: 20px; font-weight: 400;">
+            Loading Snapshot...
+        </h2>
+    </div>
+
     {nav_bar_html}
     <div class="container-wide">
         <h1 style="text-align: center; margin-bottom: 20px;">
@@ -337,27 +439,57 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         <div class="fade-in-section">
             <div class="map-grid">
                 <div class="map-box" data-tab="Energy">
-                    <div class="abs-map map-visible">{map_energy}</div>
-                    <div class="pc-map map-hidden">{map_energy_pc}</div>
+                    <div class="stack-grid">
+                        <div class="abs-map stack-layer active-layer">
+                            {map_energy}
+                        </div>
+                        <div class="pc-map stack-layer">
+                            {map_energy_pc}
+                        </div>
+                    </div>
                 </div>
                 <div class="map-box" data-tab="PeakDemand">
-                    <div class="abs-map map-visible">{map_peak}</div>
-                    <div class="pc-map map-hidden">{map_peak_pc}</div>
+                    <div class="stack-grid">
+                        <div class="abs-map stack-layer active-layer">
+                            {map_peak}
+                        </div>
+                        <div class="pc-map stack-layer">
+                            {map_peak_pc}
+                        </div>
+                    </div>
                 </div>
                 <div class="map-box" data-tab="Emissions">
-                    <div class="abs-map map-visible">{map_emissions}</div>
-                    <div class="pc-map map-hidden">{map_emissions_pc}</div>
+                    <div class="stack-grid">
+                        <div class="abs-map stack-layer active-layer">
+                            {map_emissions}
+                        </div>
+                        <div class="pc-map stack-layer">
+                            {map_emissions_pc}
+                        </div>
+                    </div>
                 </div>
             </div>
 
             <div class="map-grid">
                 <div class="map-box" data-tab="CapCost">
-                    <div class="abs-map map-visible">{map_capcost}</div>
-                    <div class="pc-map map-hidden">{map_capcost_pc}</div>
+                    <div class="stack-grid">
+                        <div class="abs-map stack-layer active-layer">
+                            {map_capcost}
+                        </div>
+                        <div class="pc-map stack-layer">
+                            {map_capcost_pc}
+                        </div>
+                    </div>
                 </div>
                 <div class="map-box" data-tab="EnergyCost">
-                    <div class="abs-map map-visible">{map_energycost}</div>
-                    <div class="pc-map map-hidden">{map_energycost_pc}</div>
+                    <div class="stack-grid">
+                        <div class="abs-map stack-layer active-layer">
+                            {map_energycost}
+                        </div>
+                        <div class="pc-map stack-layer">
+                            {map_energycost_pc}
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -366,23 +498,31 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     <script>
         function updateMode() {{
             const isPC = document.getElementById('mode-toggle').checked;
-            
+
             document.querySelectorAll('.abs-map').forEach(el => {{
-                el.className = isPC ? 'abs-map map-hidden' : 'abs-map map-visible';
+                if (isPC) {{
+                    el.classList.remove('active-layer');
+                }} else {{
+                    el.classList.add('active-layer');
+                }}
             }});
             document.querySelectorAll('.pc-map').forEach(el => {{
-                el.className = isPC ? 'pc-map map-visible' : 'pc-map map-hidden';
+                if (isPC) {{
+                    el.classList.add('active-layer');
+                }} else {{
+                    el.classList.remove('active-layer');
+                }}
             }});
 
-            const query = isPC ? '.pc-map' : '.abs-map';
-            document.querySelectorAll(query).forEach(container => {{
-                const plot = container.querySelector('.plotly-graph-div');
+            // Nudge Plotly to perfectly fit the freshly visible layer
+            document.querySelectorAll('.active-layer .plotly-graph-div').forEach(plot => {{
                 if (plot && plot.layout) {{
                     Plotly.Plots.resize(plot);
                 }}
             }});
         }}
 
+        // Reinstated the ResizeObserver to ensure initial load bounding boxes are flawless
         const ro = new ResizeObserver(entries => {{
             entries.forEach(entry => {{
                 const plot = entry.target.querySelector('.plotly-graph-div');
@@ -395,7 +535,14 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         }});
 
         window.addEventListener('load', function() {{
-            document.querySelectorAll('.abs-map, .pc-map').forEach(container => {{
+            const loader = document.getElementById('loader-overlay');
+            if (loader) {{
+                loader.classList.add('loader-hidden');
+                setTimeout(() => loader.style.display = 'none', 400);
+            }}
+
+            // Start observing all grid layers immediately to guarantee correct maps
+            document.querySelectorAll('.stack-layer').forEach(container => {{
                 ro.observe(container);
 
                 const checkPlot = setInterval(() => {{
@@ -471,36 +618,49 @@ def find_latest_eia_861_year():
     if the zip file actually exists on the EIA servers.
     """
     year = datetime.datetime.now().year
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
+    }
     while year >= 2018:
         urls = [
             f"https://www.eia.gov/electricity/data/eia861/zip/f861{year}.zip",
-            f"https://www.eia.gov/electricity/data/eia861/archive/zip/f861{year}.zip"
+            f"https://www.eia.gov/electricity/data/eia861/archive/zip/"
+            f"f861{year}.zip"
         ]
         for url in urls:
             try:
-                resp = requests.get(url, headers=headers, stream=True, timeout=5)
-                with resp as r:
-                    if r.status_code == 200:
-                        chunk = r.raw.read(2)
-                        if chunk == b'PK':
-                            return year
-            except Exception:
+                resp = requests.get(
+                    url, headers=headers, stream=True, timeout=15
+                )
+                if resp.status_code == 200:
+                    chunk = next(resp.iter_content(chunk_size=2), b'')
+                    if chunk == b'PK':
+                        return year
+            except requests.exceptions.RequestException:
                 pass
         year -= 1
-    return 2023
+    return 2024
 
 
 def extract_peak_data_zip(year):
     """
-    Extracts True Peak Demand directly from the operational_data Excel file.
+    Extracts True Peak Demand directly from the operational_data Excel file,
+    filtering out entities that would result in double-counting load.
     """
     urls = [
         f"https://www.eia.gov/electricity/data/eia861/zip/f861{year}.zip",
-        "https://www.eia.gov/electricity/data/eia861/archive/zip/"
+        f"https://www.eia.gov/electricity/data/eia861/archive/zip/"
         f"f861{year}.zip"
     ]
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {
+        'User-Agent': (
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+            '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        )
+    }
     r = None
     for url in urls:
         try:
@@ -562,7 +722,12 @@ def extract_peak_data_zip(year):
                 return None
 
             idx_st = find_idx(['state'])
-            
+            idx_name = find_idx(['utility', 'name'])
+            idx_ent = find_idx(['entity'])
+
+            if idx_ent is None:
+                idx_ent = find_idx(['ownership'])
+
             idx_sum = find_idx(['summer', 'peak'])
             if idx_sum is None:
                 idx_sum = find_idx(['summer', 'demand'])
@@ -572,15 +737,41 @@ def extract_peak_data_zip(year):
             if idx_st is None or idx_sum is None:
                 return pd.DataFrame(columns=['Region', 'Peak_Demand_GW'])
 
+            st_s = df_raw.iloc[:, idx_st].astype(str).str.strip().str.upper()
+            ent_s = (
+                df_raw.iloc[:, idx_ent].astype(str).str.lower()
+                if idx_ent is not None else ''
+            )
+            nm_s = (
+                df_raw.iloc[:, idx_name].astype(str).str.lower()
+                if idx_name is not None else ''
+            )
             df_peak = pd.DataFrame({
-                'State': df_raw.iloc[:, idx_st].astype(str).str.strip().str.upper(),
+                'State': st_s,
+                'Utility_Name': nm_s,
+                'Entity': ent_s,
                 'Peak_MW': pd.to_numeric(
                     df_raw.iloc[:, idx_sum], errors='coerce'
                 ).fillna(0)
             })
 
+            exclude_types = (
+                'marketer|retail power|community choice aggregator|'
+                'mktg authority|transmission'
+            )
+            df_peak = df_peak[
+                ~df_peak['Entity'].str.contains(exclude_types, na=False)
+            ]
+
+            exclude_names = 'power agency|power pooling|wholesale'
+            df_peak = df_peak[
+                ~df_peak['Utility_Name'].str.contains(exclude_names, na=False)
+            ]
+
             df_peak = df_peak[df_peak['State'].isin(VALID_STATES)]
-            state_peak = df_peak.groupby('State')['Peak_MW'].sum().reset_index()
+            state_peak = df_peak.groupby(
+                'State'
+            )['Peak_MW'].sum().reset_index()
             state_peak['Peak_Demand_GW'] = state_peak['Peak_MW'] / 1000.0
             state_peak.rename(columns={'State': 'Region'}, inplace=True)
 
@@ -608,7 +799,10 @@ def fetch_live_home_page_data(eia_key, census_key):
             "frequency": "annual",
             "data": ["value"],
             "facets": {
-                "seriesId": ["TERCB", "TECCB", "TERCV", "TECCV", "TERCE", "TECCE"]
+                "seriesId": [
+                    "TNRCB", "TNCCB", "TERCV", "TECCV", "TERCE", "TECCE",
+                    "TEEIE", "ESRCB", "ESCCB", "ESTXB", "ESTCB"
+                ]
             },
             "sort": [{"column": "period", "direction": "desc"}],
             "length": 5000
@@ -648,20 +842,33 @@ def fetch_live_home_page_data(eia_key, census_key):
             seds_grouped.rename(columns={'stateid': 'Region'}, inplace=True)
             seds_grouped['Region'] = seds_grouped['Region'].str.upper()
 
-            eng_total = (
-                seds_grouped.get('TERCB', 0) + seds_grouped.get('TECCB', 0)
-            )
+            def get_series(col_name):
+                if col_name in seds_grouped.columns:
+                    return seds_grouped[col_name]
+                return pd.Series(0.0, index=seds_grouped.index)
+
+            eng_total = get_series('TNRCB') + get_series('TNCCB')
             seds_grouped['Energy_Use_TBtu'] = eng_total / 1000
 
-            cost_total = (
-                seds_grouped.get('TERCV', 0) + seds_grouped.get('TECCV', 0)
-            )
+            cost_total = get_series('TERCV') + get_series('TECCV')
             seds_grouped['Energy_Cost_M$'] = cost_total
 
-            emi_total = (
-                seds_grouped.get('TERCE', 0) + seds_grouped.get('TECCE', 0)
+            power_emi = get_series('TEEIE')
+            res_sales = get_series('ESRCB')
+            com_sales = get_series('ESCCB')
+
+            tot_sales = get_series('ESTXB')
+            tot_sales = tot_sales.where(tot_sales > 0, get_series('ESTCB'))
+            tot_sales = tot_sales.where(tot_sales > 0, res_sales + com_sales)
+            tot_sales = tot_sales.replace(0, 1)  # Prevent division by zero
+
+            res_allocated = get_series('TERCE') + (
+                power_emi * (res_sales / tot_sales)
             )
-            seds_grouped['Emissions_MMTCO2e'] = emi_total
+            com_allocated = get_series('TECCE') + (
+                power_emi * (com_sales / tot_sales)
+            )
+            seds_grouped['Emissions_MMTCO2e'] = res_allocated + com_allocated
         else:
             seds_year = 2022
             seds_grouped = pd.DataFrame(
@@ -726,7 +933,7 @@ def fetch_live_home_page_data(eia_key, census_key):
         map_df_all = pd.DataFrame(list(VALID_STATES), columns=['Region'])
         map_df_all = map_df_all.merge(seds_grouped, on='Region', how='left')
         map_df_all = map_df_all.merge(state_peak_df, on='Region', how='left')
-        
+
         if not state_cap_df.empty:
             map_df_all = map_df_all.merge(
                 state_cap_df, on='Region', how='left'
@@ -737,7 +944,7 @@ def fetch_live_home_page_data(eia_key, census_key):
 
         map_df_all = map_df_all.merge(pop_df, on='Region', how='left')
         map_df_all = map_df_all.fillna(0)
-        
+
         # Ensure Population is safely > 0 for division math
         map_df_all.loc[map_df_all['Population'] == 0, 'Population'] = 1
 
@@ -766,82 +973,70 @@ def fetch_live_home_page_data(eia_key, census_key):
 
         map_df_all = map_df_all[map_df_all['Region'].isin(VALID_STATES)]
 
-        return map_df_all
+        # Return the years so we can build dynamic titles
+        return map_df_all, seds_year, peak_year
 
     except requests.exceptions.RequestException as e:
         raise RuntimeError(f"API Fetch Request failed entirely: {e}")
 
 
-def create_dummy_data():
-    """Creates dummy dataset strictly for the detail page charts."""
-    random.seed(42)
-    regions = ['CA', 'TX', 'ME', 'NY', 'FL', 'IL', 'WA']
-    years = [2026, 2035, 2050]
-    sectors = {
-        'Residential': ['SF Home', 'MF Home', 'Mobile Home'],
-        'Commercial': [
-            'Lg. Office', 'S/M Office', 'Retail', 'Hospitality',
-            'Healthcare', 'Education', 'Other', 'Warehouse'
-        ]
-    }
-    branches = [
-        ('Electricity', 'Space Heating', 'Heat Pump'),
-        ('Electricity', 'Water Heating', 'Heat Pump Water Heater'),
-        ('Electricity', 'Lighting', 'LED'),
-        ('Electricity', 'HVAC', 'Rooftop Unit'),
-        ('Natural Gas', 'Space Heating', 'Gas Boiler'),
-        ('Natural Gas', 'Cooking', 'Gas Range'),
-        ('Propane', 'Space Heating', 'Propane Furnace'),
-        ('Fuel Oil', 'Space Heating', 'Oil Boiler')
+def load_segs_data(csv_path="data/segs.csv"):
+    """
+    Loads and cleans data from data/segs.csv for the state detail pages.
+    """
+    if not os.path.exists(csv_path):
+        print(f"Warning: {csv_path} not found.")
+        return pd.DataFrame()
+
+    df = pd.read_csv(csv_path)
+    df.columns = df.columns.str.strip()
+
+    # Standardize column naming just in case
+    if 'Buildings Sector' in df.columns:
+        df.rename(
+            columns={'Buildings Sector': 'Building Sector'},
+            inplace=True
+        )
+
+    # Protect the Building Sector from dropping entirely in aggregations
+    if 'Building Sector' in df.columns:
+        df['Building Sector'] = (
+            df['Building Sector'].fillna('Unknown').astype(str).str.strip()
+        )
+
+    if 'Building Type' in df.columns:
+        df = df[df['Building Type'].astype(str).str.lower() != 'all']
+
+    if 'Region' in df.columns:
+        df = df[~df['Region'].isin(['AK', 'HI'])]
+
+    metrics = [
+        'Site Energy (TWh)', 'Peak Demand, Summer (GW)',
+        'Energy Costs (Bn.$)', 'Emissions (CO2e)', 'Capital Costs (Bn.$)'
     ]
+    for m in metrics:
+        if m in df.columns:
+            df[m] = pd.to_numeric(
+                df[m], errors='coerce'
+            ).fillna(0).clip(lower=0)
 
-    data = []
-    for r in regions:
-        for y in years:
-            for sector, b_types in sectors.items():
-                for b_type in b_types:
-                    for fuel, end_use, tech in branches:
-                        if sector == 'Residential' and end_use == 'HVAC':
-                            continue
+    # Automatically convert TWh to TBtu for consistency with maps
+    if 'Site Energy (TWh)' in df.columns:
+        df['Site Energy Use (TBtu)'] = df['Site Energy (TWh)'] * 3.412142
 
-                        val = random.randint(5, 50)
-                        if fuel in ['Propane', 'Fuel Oil']:
-                            val *= 0.15
-                        if y == 2035:
-                            if fuel in ['Natural Gas', 'Fuel Oil', 'Propane']:
-                                val *= 0.7
-                            if 'Heat Pump' in tech or tech == 'LED':
-                                val *= 1.5
-                        elif y == 2050:
-                            if fuel in ['Natural Gas', 'Fuel Oil', 'Propane']:
-                                val *= 0.2
-                            if 'Heat Pump' in tech or tech == 'LED':
-                                val *= 3.0
-
-                        val_ex = val * 0.85
-                        val_nw = val * 0.15
-                        e_fact = 0.5 if fuel == 'Natural Gas' else (
-                            0.6 if fuel == 'Propane' else (
-                                0.7 if fuel == 'Fuel Oil' else 0.1
-                            )
-                        )
-                        p_fact = 0.2 if fuel == 'Electricity' else 0.0
-
-                        for c_type, v in [('Existing', val_ex), ('New', val_nw)]:
-                            data.append([
-                                r, y, sector, b_type, fuel, end_use, tech,
-                                c_type, round(v, 1), round(v * e_fact, 1),
-                                round(v * p_fact, 1), round(v * 1.5, 1),
-                                round(v * 0.8, 1)
-                            ])
-
-    cols = [
-        'Region', 'Year', 'Sector', 'Building_Type', 'Fuel_Type',
-        'End_Use', 'Technology', 'Construction_Type', 'Energy_Use_TBtu',
-        'Emissions_MMTCO2e', 'Peak_Demand_GW', 'Capital_Cost_M$',
-        'Energy_Cost_M$'
+    # Ensure path cols AND tooltip cols exist and handle nulls
+    path_cols = [
+        'Fuel Type', 'End Use', 'Segment Name', 'Building Type', 'Vintage'
     ]
-    return pd.DataFrame(data, columns=cols)
+    tooltip_cols = [
+        'Fuel Type Tooltip', 'End Use Tooltip', 'Segment Tooltip',
+        'Building Type Tooltip', 'Vintage Tooltip'
+    ]
+    for p in path_cols + tooltip_cols:
+        if p in df.columns:
+            df[p] = df[p].fillna('Unknown')
+
+    return df
 
 
 # ---------------------------------------------------------
@@ -876,54 +1071,160 @@ def generate_navbar_html(divisions_dict):
     return nav_html
 
 
-def generate_sunburst_row(df_subset, metric_col, path_cols, color_dict=None):
-    """Generates 3 Sunbursts using a flexible path and color mapping."""
-    row_html = ""
+def generate_sunburst_row(
+    df_subset, metric_col, path_cols, color_dict=None, tooltip_mapping=None
+):
+    """Generates Multi-Filtered Sunbursts, grouped with Segmented Toggles."""
+    if tooltip_mapping is None:
+        tooltip_mapping = {}
+
     years = [2026, 2035, 2050]
 
-    df_disp = df_subset.copy()
-    for col in path_cols:
-        df_disp[col] = df_disp[col].astype(str).str.replace(' ', '<br>')
+    # Extract unit safely from metric name (e.g., 'TBtu')
+    unit = ""
+    if "(" in metric_col and ")" in metric_col:
+        unit = metric_col.split('(')[-1].split(')')[0]
 
-    for year in years:
-        df_year = df_disp[df_disp['Year'] == year]
+    def build_charts(data):
+        row_html = (
+            "<div style='display: flex; flex-wrap: wrap; "
+            "justify-content: space-between; width: 100%;'>"
+        )
+        for year in years:
+            df_year = data[data['Year'] == year]
 
-        if df_year.empty or df_year[metric_col].sum() == 0:
-            row_html += (
-                f"<div class='chart-container'>"
-                f"<p style='text-align:center;'>No {metric_col} "
-                f"data for {year}</p></div>"
+            if df_year.empty or df_year[metric_col].sum() == 0:
+                row_html += (
+                    f"<div class='chart-container'>"
+                    f"<p style='text-align:center;'>No {metric_col} "
+                    f"data for {year}</p></div>"
+                )
+                continue
+
+            total_val = df_year[metric_col].sum()
+            unit_str = f" {unit}" if unit else ""
+
+            fig = px.sunburst(
+                df_year, path=path_cols, values=metric_col,
+                color=path_cols[0], color_discrete_map=color_dict,
+                title=f"Year {year}: {total_val:,.1f}{unit_str}"
             )
-            continue
 
-        fig = px.sunburst(
-            df_year, path=path_cols, values=metric_col,
-            color=path_cols[0], color_discrete_map=color_dict,
-            title=f"Year {year}"
-        )
+            mapped_hover_text = [
+                [tooltip_mapping.get(label, label)]
+                for label in fig.data[0].labels
+            ]
 
-        fig.update_traces(
-            hovertemplate=(
-                "<b>%{label}</b><br>"
-                f"{metric_col}: %{{value}}<br>"
-                "Share of Parent: %{percentParent:.1%}<extra></extra>"
-            ),
-            marker=dict(line=dict(color='white', width=1.5))
-        )
+            fig.update_traces(
+                customdata=mapped_hover_text,
+                hovertemplate=(
+                    "<b>%{customdata[0]}</b><br>"
+                    f"{metric_col}: %{{value:,.1f}}<br>"
+                    "Share of Parent: %{percentParent:.1%}<extra></extra>"
+                ),
+                marker=dict(line=dict(color='white', width=1.5))
+            )
 
-        fig.update_layout(
-            font=dict(family=GITHUB_FONT),
-            margin=dict(t=30, l=0, r=0, b=0),
-            autosize=True, uniformtext=dict(minsize=11, mode='hide')
-        )
+            fig.update_layout(
+                font=dict(family=GITHUB_FONT),
+                margin=dict(t=30, l=0, r=0, b=0),
+                autosize=True, uniformtext=dict(minsize=11, mode='hide')
+            )
 
-        chart_div = fig.to_html(
-            full_html=False, include_plotlyjs=False,
-            default_width='100%', config={'responsive': True}
-        )
-        row_html += f"<div class='chart-container'>{chart_div}</div>"
+            chart_div = fig.to_html(
+                full_html=False, include_plotlyjs=False,
+                default_width='100%', config={'responsive': True}
+            )
+            row_html += f"<div class='chart-container'>{chart_div}</div>"
+        row_html += "</div>"
+        return row_html
 
-    return row_html
+    # Safely extract unique ID base for the tab controls
+    tab_id = "".join(e for e in metric_col if e.isalnum())
+
+    def get_filtered_df(df, sector_val, unknown_val):
+        tmp = df.copy()
+
+        if sector_val == 'res' and 'Building Sector' in tmp.columns:
+            mask = tmp['Building Sector'].astype(str).str.lower() == 'residential'
+            tmp = tmp[mask]
+        elif sector_val == 'com' and 'Building Sector' in tmp.columns:
+            mask = tmp['Building Sector'].astype(str).str.lower() == 'commercial'
+            tmp = tmp[mask]
+
+        if unknown_val == 'exc' and 'End Use' in tmp.columns:
+            tmp = tmp[tmp['End Use'] != 'Unknown']
+
+        for col in path_cols:
+            if col in tmp.columns:
+                tmp[col] = tmp[col].astype(str).str.replace(' ', '<br>')
+
+        return tmp
+
+    # Pre-calculate the 6 visual permutations
+    html_all_inc = build_charts(get_filtered_df(df_subset, 'all', 'inc'))
+    html_all_exc = build_charts(get_filtered_df(df_subset, 'all', 'exc'))
+    html_res_inc = build_charts(get_filtered_df(df_subset, 'res', 'inc'))
+    html_res_exc = build_charts(get_filtered_df(df_subset, 'res', 'exc'))
+    html_com_inc = build_charts(get_filtered_df(df_subset, 'com', 'inc'))
+    html_com_exc = build_charts(get_filtered_df(df_subset, 'com', 'exc'))
+
+    combined_html = f"""
+    <div class="filter-panel" style="display: flex; justify-content: center; gap: 30px;
+    margin-bottom: 20px;">
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <span class="toggle-label">Sector:</span>
+            <div class="segmented-control">
+                <input type="radio" id="sec-all-{tab_id}" name="sector-{tab_id}" value="all"
+                checked onchange="updateSunburstFilters(this)">
+                <label for="sec-all-{tab_id}">All</label>
+
+                <input type="radio" id="sec-res-{tab_id}" name="sector-{tab_id}" value="res"
+                onchange="updateSunburstFilters(this)">
+                <label for="sec-res-{tab_id}">Residential</label>
+
+                <input type="radio" id="sec-com-{tab_id}" name="sector-{tab_id}" value="com"
+                onchange="updateSunburstFilters(this)">
+                <label for="sec-com-{tab_id}">Commercial</label>
+            </div>
+        </div>
+
+        <div style="display: flex; align-items: center; gap: 10px;">
+            <span class="toggle-label">Unknowns:</span>
+            <div class="segmented-control">
+                <input type="radio" id="unk-inc-{tab_id}" name="unknown-{tab_id}" value="inc"
+                checked onchange="updateSunburstFilters(this)">
+                <label for="unk-inc-{tab_id}">Include</label>
+
+                <input type="radio" id="unk-exc-{tab_id}" name="unknown-{tab_id}" value="exc"
+                onchange="updateSunburstFilters(this)">
+                <label for="unk-exc-{tab_id}">Exclude</label>
+            </div>
+        </div>
+    </div>
+
+    <div class="stack-grid">
+        <div class="sunburst-view view-all-inc stack-layer active-layer">
+            {html_all_inc}
+        </div>
+        <div class="sunburst-view view-all-exc stack-layer">
+            {html_all_exc}
+        </div>
+        <div class="sunburst-view view-res-inc stack-layer">
+            {html_res_inc}
+        </div>
+        <div class="sunburst-view view-res-exc stack-layer">
+            {html_res_exc}
+        </div>
+        <div class="sunburst-view view-com-inc stack-layer">
+            {html_com_inc}
+        </div>
+        <div class="sunburst-view view-com-exc stack-layer">
+            {html_com_exc}
+        </div>
+    </div>
+    """
+    return combined_html
 
 
 # ---------------------------------------------------------
@@ -937,41 +1238,72 @@ def main():
     output_dir = "docs"
     os.makedirs(output_dir, exist_ok=True)
 
-    # Fetch strictly live map data
-    map_df_all = fetch_live_home_page_data(eia_key, census_key)
+    # Fetch strictly live map data and capture dynamic years
+    map_df_all, seds_year, peak_year = fetch_live_home_page_data(
+        eia_key, census_key
+    )
 
-    # Note: State Detail pages still use synthetic dummy data
-    df = create_dummy_data()
+    # Load Real Detail Data from CSV
+    df = load_segs_data("data/segs.csv")
     dynamic_navbar = generate_navbar_html(CENSUS_DIVISIONS)
 
     std_path = [
-        'Fuel_Type', 'End_Use', 'Technology',
-        'Building_Type', 'Construction_Type'
+        'Fuel Type', 'End Use', 'Segment Name', 'Building Type', 'Vintage'
     ]
+
+    # Dynamically build the tooltip mapping dictionary based on real CSV keys
+    tooltip_mapping = {}
+    if not df.empty:
+        pairs = [
+            ('Fuel Type', 'Fuel Type Tooltip'),
+            ('End Use', 'End Use Tooltip'),
+            ('Segment Name', 'Segment Tooltip'),
+            ('Building Type', 'Building Type Tooltip'),
+            ('Vintage', 'Vintage Tooltip')
+        ]
+        for short_col, long_col in pairs:
+            if short_col in df.columns and long_col in df.columns:
+                for s, l in zip(df[short_col], df[long_col]):
+                    tooltip_mapping[str(s)] = str(l)
+                    # Map the `<br>` replaced version exactly as Plotly sees it
+                    tooltip_mapping[str(s).replace(' ', '<br>')] = str(l)
+
     std_colors = {
-        'Electricity': '#19D3F3', 'Natural<br>Gas': '#FFA15A',
-        'Propane': '#B6E880', 'Fuel<br>Oil': '#FF97FF'
+        'Elec.': '#19D3F3',
+        'NG': '#FFA15A',
+        'Prop.': '#B6E880',
+        'Dist.': '#FF97FF',
+        'Other': '#7F7F7F',
+        'Bio.': '#2CA02C'
     }
 
-    peak_path = ['End_Use', 'Technology', 'Building_Type', 'Construction_Type']
-    peak_colors = {
-        'Space<br>Heating': '#EF553B', 'Water<br>Heating': '#00CC96',
-        'Lighting': '#AB63FA', 'HVAC': '#1F77B4'
-    }
-
+    # Helper function to generate individual pages
     def build_page_html(data_slice, page_title):
         html_eng = generate_sunburst_row(
-            data_slice, 'Energy_Use_TBtu', std_path, std_colors)
+            data_slice, 'Site Energy Use (TBtu)', std_path,
+            std_colors, tooltip_mapping
+        )
         html_emi = generate_sunburst_row(
-            data_slice, 'Emissions_MMTCO2e', std_path, std_colors)
+            data_slice, 'Emissions (CO2e)', std_path,
+            std_colors, tooltip_mapping
+        )
         html_cap = generate_sunburst_row(
-            data_slice, 'Capital_Cost_M$', std_path, std_colors)
+            data_slice, 'Capital Costs (Bn.$)', std_path,
+            std_colors, tooltip_mapping
+        )
         html_enc = generate_sunburst_row(
-            data_slice, 'Energy_Cost_M$', std_path, std_colors)
+            data_slice, 'Energy Costs (Bn.$)', std_path,
+            std_colors, tooltip_mapping
+        )
 
-        peak_df = data_slice[data_slice['Fuel_Type'] == 'Electricity']
+        # For Peak Demand we only want Electricity
+        peak_df = data_slice[data_slice['Fuel Type'] == 'Elec.']
+        peak_path = std_path[1:]
+
         html_peak = generate_sunburst_row(
-            peak_df, 'Peak_Demand_GW', peak_path, peak_colors)
+            peak_df, 'Peak Demand, Summer (GW)', peak_path,
+            tooltip_mapping=tooltip_mapping
+        )
 
         return HTML_TEMPLATE.format(
             css_styles=CSS_STYLES, nav_bar_html=dynamic_navbar,
@@ -980,42 +1312,63 @@ def main():
             cap_cost_charts_html=html_cap, energy_cost_charts_html=html_enc
         )
 
-    print("Generating National view...")
-    with open(os.path.join(output_dir, "national.html"), "w") as f:
-        f.write(build_page_html(df, "National"))
+    if not df.empty:
+        print("Generating National view from aggregated CSV...")
+        metrics = [
+            'Site Energy Use (TBtu)', 'Peak Demand, Summer (GW)',
+            'Energy Costs (Bn.$)', 'Emissions (CO2e)', 'Capital Costs (Bn.$)'
+        ]
 
-    for state in df['Region'].unique():
-        print(f"Generating view for {state}...")
-        state_df = df[df['Region'] == state]
-        with open(os.path.join(output_dir, f"{state}.html"), "w") as f:
-            f.write(build_page_html(state_df, state))
+        # Include 'Building Sector' in groupby so it is available for filtering
+        group_cols = ['Year', 'Building Sector'] + std_path
+        actual_group_cols = [c for c in group_cols if c in df.columns]
+
+        # Use dropna=False so that any 'Unknown' or missing data isn't destroyed
+        df_nat = df.groupby(
+            actual_group_cols, dropna=False
+        )[metrics].sum().reset_index()
+        df_nat['Region'] = 'National'
+
+        with open(os.path.join(output_dir, "national.html"), "w") as f:
+            f.write(build_page_html(df_nat, "National"))
+
+        # Generate State Views
+        for state in df['Region'].unique():
+            if state in ['AK', 'HI', 'National']:
+                continue
+            print(f"Generating view for {state}...")
+            state_df = df[df['Region'] == state]
+            with open(os.path.join(output_dir, f"{state}.html"), "w") as f:
+                f.write(build_page_html(state_df, state))
+    else:
+        print("[WARNING] No real data available. Detail pages skipped.")
 
     print("Generating Multi-Panel Home page...")
     if not map_df_all.empty:
 
-        def generate_map_panel(data, metric, title, is_ahs=False, fmt=",.1f"):
+        def generate_map_panel(
+            data, metric, title, hover_title, is_ahs=False, fmt=",.1f"
+        ):
             fig = px.choropleth(
                 data, locations='Region', locationmode="USA-states",
                 color=metric, scope="usa", title=title,
                 color_continuous_scale="Teal"
             )
 
-            # Add clean white borders
             fig.update_traces(marker_line_color='white', marker_line_width=1.0)
 
-            # Format hover labels to cleanly denote Census Divisions for AHS data
             if is_ahs and 'Division_Name' in data.columns:
                 fig.update_traces(
                     customdata=data[['Division_Name']],
                     hovertemplate=(
                         "<b>%{location} (%{customdata[0]})</b><br>" +
-                        title + ": %{z:" + fmt + "}<extra></extra>")
+                        hover_title + ": %{z:" + fmt + "}<extra></extra>")
                 )
             else:
                 fig.update_traces(
                     hovertemplate=(
                         "<b>%{location}</b><br>" +
-                        title + ": %{z:" + fmt + "}<extra></extra>")
+                        hover_title + ": %{z:" + fmt + "}<extra></extra>")
                 )
 
             fig.update_layout(
@@ -1030,40 +1383,90 @@ def main():
                 config={'responsive': True}
             )
 
-        # Standard Absolute Data Maps
+        # Calculate Absolute Totals
+        tot_eng = map_df_all['Energy_Use_TBtu'].sum()
+        tot_peak = map_df_all['Peak_Demand_GW'].sum()
+        tot_emi = map_df_all['Emissions_MMTCO2e'].sum()
+
+        # Calculate Billions for Financials
+        tot_cap_bn = map_df_all['Capital_Cost_M$'].sum() / 1000
+        tot_enc_bn = map_df_all['Energy_Cost_M$'].sum() / 1000
+
+        # Build Map Titles
+        title_eng = f"{seds_year} Site Energy Use: {tot_eng:,.0f} TBtu"
+        title_peak = (
+            f"{peak_year} Peak Demand, Summer: {tot_peak:,.0f} GW<br>"
+            f"<span style='font-size:12px; font-weight:normal;'>"
+            f"*Total system peak, not exclusively building demand.</span>"
+        )
+        title_emi = f"{seds_year} Emissions: {tot_emi:,.0f} MMTCO2e"
+        title_cap = f"2023 Capital Costs (Equip. Replace): {tot_cap_bn:,.1f} Bn.$"
+        title_enc = f"{seds_year} Energy Cost: {tot_enc_bn:,.1f} Bn.$"
+
+        # Build Per Capita Map Titles
+        title_eng_pc = (
+            f"{seds_year} Site Energy Use (MMBtu/Capita)<br>"
+            f"<span style='font-size:12px; font-weight:normal;'>"
+            f"National Total: {tot_eng:,.0f} TBtu</span>"
+        )
+        title_peak_pc = (
+            f"{peak_year} Peak Demand, Summer (kW/Capita)<br>"
+            f"<span style='font-size:12px; font-weight:normal;'>"
+            f"National Total: {tot_peak:,.0f} GW (*Total system peak, "
+            f"not exclusively building demand.)</span>"
+        )
+        title_emi_pc = (
+            f"{seds_year} Emissions (MTCO2e/Capita)<br>"
+            f"<span style='font-size:12px; font-weight:normal;'>"
+            f"National Total: {tot_emi:,.0f} MMTCO2e</span>"
+        )
+        title_cap_pc = (
+            f"2023 CapEx ($/Capita)<br>"
+            f"<span style='font-size:12px; font-weight:normal;'>"
+            f"National Total: {tot_cap_bn:,.1f} Bn.$</span>"
+        )
+        title_enc_pc = (
+            f"{seds_year} Energy Cost ($/Capita)<br>"
+            f"<span style='font-size:12px; font-weight:normal;'>"
+            f"National Total: {tot_enc_bn:,.1f} Bn.$</span>"
+        )
+
         map_eng = generate_map_panel(
-            map_df_all, 'Energy_Use_TBtu', "Energy Use (TBtu)"
+            map_df_all, 'Energy_Use_TBtu', title_eng, "Site Energy Use (TBtu)"
         )
         map_peak = generate_map_panel(
-            map_df_all, 'Peak_Demand_GW', "Peak Demand (GW)"
+            map_df_all, 'Peak_Demand_GW', title_peak, "Peak Demand, Summer (GW)"
         )
         map_emi = generate_map_panel(
-            map_df_all, 'Emissions_MMTCO2e', "Emissions (MMTCO2e)"
+            map_df_all, 'Emissions_MMTCO2e', title_emi, "Emissions (MMTCO2e)"
         )
         map_cap = generate_map_panel(
-            map_df_all, 'Capital_Cost_M$', "Capital Expenditures (M$)",
+            map_df_all, 'Capital_Cost_M$', title_cap, "Capital Expenditures (M$)",
             is_ahs=True
         )
         map_enc = generate_map_panel(
-            map_df_all, 'Energy_Cost_M$', "Energy Cost (M$)"
+            map_df_all, 'Energy_Cost_M$', title_enc, "Energy Cost (M$)"
         )
 
-        # Per Capita Data Maps
         map_eng_pc = generate_map_panel(
-            map_df_all, 'Energy_pc', "Energy (MMBtu/Capita)", fmt=",.0f"
+            map_df_all, 'Energy_pc', title_eng_pc, "Site Energy Use (MMBtu/Capita)",
+            fmt=",.0f"
         )
         map_peak_pc = generate_map_panel(
-            map_df_all, 'Peak_pc', "Peak Demand (kW/Capita)", fmt=",.2f"
+            map_df_all, 'Peak_pc', title_peak_pc, "Peak Demand, Summer (kW/Capita)",
+            fmt=",.2f"
         )
         map_emi_pc = generate_map_panel(
-            map_df_all, 'Emissions_pc', "Emissions (MTCO2e/Capita)", fmt=",.1f"
+            map_df_all, 'Emissions_pc', title_emi_pc, "Emissions (MTCO2e/Capita)",
+            fmt=",.1f"
         )
         map_cap_pc = generate_map_panel(
-            map_df_all, 'CapCost_pc', "CapEx ($/Capita)",
+            map_df_all, 'CapCost_pc', title_cap_pc, "CapEx ($/Capita)",
             is_ahs=True, fmt="$,.0f"
         )
         map_enc_pc = generate_map_panel(
-            map_df_all, 'Cost_pc', "Energy Cost ($/Capita)", fmt="$,.0f"
+            map_df_all, 'Cost_pc', title_enc_pc, "Energy Cost ($/Capita)",
+            fmt="$,.0f"
         )
 
         final_idx_html = INDEX_TEMPLATE.format(
