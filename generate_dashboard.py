@@ -161,7 +161,10 @@ CSS_STYLES = f"""
         z-index: 1;
     }}
 
-    @keyframes smoothLoad {{ 0% {{ opacity: 0; }} 100% {{ opacity: 1; }} }}
+    @keyframes smoothLoad {{
+        0% {{ opacity: 0; }}
+        100% {{ opacity: 1; }}
+    }}
     .fade-in-section {{
         opacity: 0; animation: smoothLoad 0.4s ease-out forwards;
         animation-delay: 0.2s;
@@ -219,6 +222,16 @@ CSS_STYLES = f"""
     input:checked + .slider:before {{ transform: translateX(24px); }}
     .toggle-label {{ font-size: 14px; font-weight: 600; color: #57606a; }}
 
+    /* ANTI-SNAP CSS CLASSES FOR MAP AND CHART TOGGLES */
+    .map-hidden {{
+        height: 0; overflow: hidden; opacity: 0;
+        pointer-events: none; visibility: hidden;
+    }}
+    .map-visible {{
+        height: auto; opacity: 1;
+        pointer-events: auto; visibility: visible;
+    }}
+
     /* LOADING SPINNER */
     #loader-overlay {{
         position: fixed; top: 0; left: 0; width: 100%; height: 100%;
@@ -231,7 +244,10 @@ CSS_STYLES = f"""
         border-radius: 50%; width: 50px; height: 50px;
         animation: spin 1s linear infinite;
     }}
-    @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
+    @keyframes spin {{
+        0% {{ transform: rotate(0deg); }}
+        100% {{ transform: rotate(360deg); }}
+    }}
     .loader-hidden {{ opacity: 0; pointer-events: none; }}
 """
 
@@ -258,8 +274,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             <button class="tab-btn" onclick="openTab(event, 'Energy')">
                 Site Energy Use
             </button>
-            <button class="tab-btn" onclick="openTab(event, 'PeakDemand')">
-                Peak Demand
+            <button class="tab-btn"
+                    onclick="openTab(event, 'PeakDemand_Summer')">
+                Summer Peak
+            </button>
+            <button class="tab-btn"
+                    onclick="openTab(event, 'PeakDemand_Winter')">
+                Winter Peak
             </button>
             <button class="tab-btn" onclick="openTab(event, 'Emissions')">
                 Emissions
@@ -280,11 +301,18 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 <div class="chart-row">{energy_charts_html}</div>
             </div>
 
-            <div id="PeakDemand" class="tab-content">
+            <div id="PeakDemand_Summer" class="tab-content">
                 <h2 style="text-align: center; font-weight: 400;">
                     Peak Demand, Summer (GW)
                 </h2>
-                <div class="chart-row">{peak_charts_html}</div>
+                <div class="chart-row">{summer_peak_charts_html}</div>
+            </div>
+
+            <div id="PeakDemand_Winter" class="tab-content">
+                <h2 style="text-align: center; font-weight: 400;">
+                    Peak Demand, Winter (GW)
+                </h2>
+                <div class="chart-row">{winter_peak_charts_html}</div>
             </div>
 
             <div id="Emissions" class="tab-content">
@@ -313,6 +341,7 @@ HTML_TEMPLATE = """<!DOCTYPE html>
     <script>
         var hash = window.location.hash.substring(1);
         var targetMetric = hash ? hash : 'Energy';
+        var scrollToId = null;
 
         var targetContent = document.getElementById(targetMetric);
         if (targetContent) {{
@@ -321,10 +350,39 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 
         var tabLinks = document.getElementsByClassName("tab-btn");
         for (var i = 0; i < tabLinks.length; i++) {{
-            if (tabLinks[i].getAttribute('onclick').indexOf(targetMetric) !== -1) {{
+            if (tabLinks[i].getAttribute('onclick')
+                    .indexOf(targetMetric) !== -1) {{
                 tabLinks[i].classList.add("active");
                 break;
             }}
+        }}
+
+        function renderVisibleCharts() {{
+            const activeScripts = document.querySelectorAll(
+                '.tab-content.active .active-layer script.lazy-plotly'
+            );
+            activeScripts.forEach(template => {{
+                const script = document.createElement('script');
+                script.textContent = template.textContent;
+                document.body.appendChild(script);
+                template.classList.remove('lazy-plotly');
+                template.type = "text/executed";
+
+                const container = template.closest('.chart-container');
+                if (container) {{
+                    setTimeout(() => container.classList.add('ready'), 50);
+                }}
+            }});
+
+            setTimeout(() => {{
+                document.querySelectorAll(
+                    '.tab-content.active .active-layer .plotly-graph-div'
+                ).forEach(plot => {{
+                    if (plot && plot.layout) {{
+                        Plotly.Plots.resize(plot);
+                    }}
+                }});
+            }}, 100);
         }}
 
         function openTab(evt, metricName) {{
@@ -343,11 +401,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 evt.currentTarget.classList.add("active");
             }}
 
-            window.dispatchEvent(new Event('resize'));
+            renderVisibleCharts();
         }}
 
         function updateSunburstFilters(element) {{
             const container = element.closest('.tab-content');
+
+            const hierChecked = container.querySelector(
+                'input[name^="hierarchy-"]:checked'
+            );
+            const hierarchy = hierChecked ? hierChecked.value : 'fuel';
 
             const sectorChecked = container.querySelector(
                 'input[name^="sector-"]:checked'
@@ -359,7 +422,8 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             );
             const unknown = unknownChecked ? unknownChecked.value : 'inc';
 
-            const targetClass = 'view-' + sector + '-' + unknown;
+            const targetClass = 'view-' + hierarchy + '-' + sector + '-'
+                                + unknown;
 
             container.querySelectorAll('.sunburst-view').forEach(el => {{
                 if (el.classList.contains(targetClass)) {{
@@ -369,22 +433,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 }}
             }});
 
-            // Nudge Plotly to perfectly fit the freshly visible layer
-            container.querySelectorAll('.active-layer .plotly-graph-div').forEach(plot => {{
-                if (plot && plot.layout) {{
-                    Plotly.Plots.resize(plot);
-                }}
-            }});
+            renderVisibleCharts();
         }}
 
-        // Reinstated the ResizeObserver to ensure initial load bounding boxes are flawless
         const ro = new ResizeObserver(entries => {{
             entries.forEach(entry => {{
+                if (!entry.target.closest('.active-layer')) return;
                 const plot = entry.target.querySelector('.plotly-graph-div');
                 if (plot && plot.layout) {{
-                    Plotly.Plots.resize(plot).then(() => {{
-                        entry.target.classList.add('ready');
-                    }});
+                    Plotly.Plots.resize(plot);
                 }}
             }});
         }});
@@ -396,10 +453,20 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 setTimeout(() => loader.style.display = 'none', 400);
             }}
 
-            // Start observing all chart containers immediately
-            document.querySelectorAll('.chart-container').forEach(container => {{
-                ro.observe(container);
-            }});
+            renderVisibleCharts();
+
+            document.querySelectorAll('.chart-container').forEach(
+                container => {{
+                    ro.observe(container);
+                }}
+            );
+
+            if (typeof scrollToId !== 'undefined' && scrollToId) {{
+                setTimeout(() => {{
+                    var el = document.getElementById(scrollToId);
+                    if (el) el.scrollIntoView({{behavior: 'smooth'}});
+                }}, 600);
+            }}
         }});
     </script>
 </body>
@@ -430,7 +497,8 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
         <div class="toggle-container">
             <span class="toggle-label">Absolute View</span>
             <label class="switch">
-                <input type="checkbox" id="mode-toggle" onchange="updateMode()">
+                <input type="checkbox" id="mode-toggle"
+                       onchange="updateMode()">
                 <span class="slider"></span>
             </label>
             <span class="toggle-label">Per Capita View</span>
@@ -448,16 +516,29 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
                         </div>
                     </div>
                 </div>
-                <div class="map-box" data-tab="PeakDemand">
+                <div class="map-box" data-tab="PeakDemand_Summer">
                     <div class="stack-grid">
                         <div class="abs-map stack-layer active-layer">
-                            {map_peak}
+                            {map_summer_peak}
                         </div>
                         <div class="pc-map stack-layer">
-                            {map_peak_pc}
+                            {map_summer_peak_pc}
                         </div>
                     </div>
                 </div>
+                <div class="map-box" data-tab="PeakDemand_Winter">
+                    <div class="stack-grid">
+                        <div class="abs-map stack-layer active-layer">
+                            {map_winter_peak}
+                        </div>
+                        <div class="pc-map stack-layer">
+                            {map_winter_peak_pc}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="map-grid">
                 <div class="map-box" data-tab="Emissions">
                     <div class="stack-grid">
                         <div class="abs-map stack-layer active-layer">
@@ -468,9 +549,6 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
                         </div>
                     </div>
                 </div>
-            </div>
-
-            <div class="map-grid">
                 <div class="map-box" data-tab="CapCost">
                     <div class="stack-grid">
                         <div class="abs-map stack-layer active-layer">
@@ -496,6 +574,34 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
     </div>
 
     <script>
+        function renderVisibleCharts() {{
+            const activeScripts = document.querySelectorAll(
+                '.active-layer script.lazy-plotly'
+            );
+            activeScripts.forEach(template => {{
+                const script = document.createElement('script');
+                script.textContent = template.textContent;
+                document.body.appendChild(script);
+                template.classList.remove('lazy-plotly');
+                template.type = "text/executed";
+
+                const container = template.closest('.stack-layer');
+                if (container) {{
+                    setTimeout(() => container.classList.add('ready'), 50);
+                }}
+            }});
+
+            setTimeout(() => {{
+                document.querySelectorAll(
+                    '.active-layer .plotly-graph-div'
+                ).forEach(plot => {{
+                    if (plot && plot.layout) {{
+                        Plotly.Plots.resize(plot);
+                    }}
+                }});
+            }}, 100);
+        }}
+
         function updateMode() {{
             const isPC = document.getElementById('mode-toggle').checked;
 
@@ -514,22 +620,15 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
                 }}
             }});
 
-            // Nudge Plotly to perfectly fit the freshly visible layer
-            document.querySelectorAll('.active-layer .plotly-graph-div').forEach(plot => {{
-                if (plot && plot.layout) {{
-                    Plotly.Plots.resize(plot);
-                }}
-            }});
+            renderVisibleCharts();
         }}
 
-        // Reinstated the ResizeObserver to ensure initial load bounding boxes are flawless
         const ro = new ResizeObserver(entries => {{
             entries.forEach(entry => {{
+                if (!entry.target.classList.contains('active-layer')) return;
                 const plot = entry.target.querySelector('.plotly-graph-div');
                 if (plot && plot.layout) {{
-                    Plotly.Plots.resize(plot).then(() => {{
-                        entry.target.classList.add('ready');
-                    }});
+                    Plotly.Plots.resize(plot);
                 }}
             }});
         }});
@@ -541,7 +640,8 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
                 setTimeout(() => loader.style.display = 'none', 400);
             }}
 
-            // Start observing all grid layers immediately to guarantee correct maps
+            renderVisibleCharts();
+
             document.querySelectorAll('.stack-layer').forEach(container => {{
                 ro.observe(container);
 
@@ -553,7 +653,8 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
                             let state = data.points[0].location;
                             let targetBox = container.closest('.map-box');
                             let targetTab = targetBox.getAttribute('data-tab');
-                            window.location.href = state + '.html#' + targetTab;
+                            window.location.href = state + '.html#'
+                                + targetTab;
                         }});
                     }}
                 }}, 100);
@@ -586,7 +687,11 @@ def fetch_state_population(census_key, target_year):
     year = target_year
     while year >= 2021:
         url = f"https://api.census.gov/data/{year}/pep/population"
-        params = {"get": f"POP_{year},NAME", "for": "state:*", "key": census_key}
+        params = {
+            "get": f"POP_{year},NAME",
+            "for": "state:*",
+            "key": census_key
+        }
         try:
             resp = requests.get(url, params=params, timeout=10)
             if resp.status_code == 200:
@@ -672,7 +777,9 @@ def extract_peak_data_zip(year):
             continue
 
     if r is None:
-        return pd.DataFrame(columns=['Region', 'Peak_Demand_GW'])
+        return pd.DataFrame(columns=[
+            'Region', 'Summer_Peak_Demand_GW', 'Winter_Peak_Demand_GW'
+        ])
 
     try:
         with zipfile.ZipFile(io.BytesIO(r.content)) as z:
@@ -686,7 +793,9 @@ def extract_peak_data_zip(year):
                      and not f.startswith('~')), None
                 )
             if not target:
-                return pd.DataFrame(columns=['Region', 'Peak_Demand_GW'])
+                return pd.DataFrame(columns=[
+                    'Region', 'Summer_Peak_Demand_GW', 'Winter_Peak_Demand_GW'
+                ])
 
             df_top = pd.read_excel(z.open(target), header=None, nrows=15)
             mask = df_top.apply(
@@ -734,8 +843,16 @@ def extract_peak_data_zip(year):
             if idx_sum is None:
                 idx_sum = find_idx(['summer', 'max'])
 
+            idx_win = find_idx(['winter', 'peak'])
+            if idx_win is None:
+                idx_win = find_idx(['winter', 'demand'])
+            if idx_win is None:
+                idx_win = find_idx(['winter', 'max'])
+
             if idx_st is None or idx_sum is None:
-                return pd.DataFrame(columns=['Region', 'Peak_Demand_GW'])
+                return pd.DataFrame(columns=[
+                    'Region', 'Summer_Peak_Demand_GW', 'Winter_Peak_Demand_GW'
+                ])
 
             st_s = df_raw.iloc[:, idx_st].astype(str).str.strip().str.upper()
             ent_s = (
@@ -746,13 +863,18 @@ def extract_peak_data_zip(year):
                 df_raw.iloc[:, idx_name].astype(str).str.lower()
                 if idx_name is not None else ''
             )
+
+            s_mw = pd.to_numeric(df_raw.iloc[:, idx_sum], errors='coerce')
+            w_mw = pd.to_numeric(
+                df_raw.iloc[:, idx_win], errors='coerce'
+            ) if idx_win is not None else pd.Series(0, index=df_raw.index)
+
             df_peak = pd.DataFrame({
                 'State': st_s,
                 'Utility_Name': nm_s,
                 'Entity': ent_s,
-                'Peak_MW': pd.to_numeric(
-                    df_raw.iloc[:, idx_sum], errors='coerce'
-                ).fillna(0)
+                'Summer_MW': s_mw.fillna(0),
+                'Winter_MW': w_mw.fillna(0)
             })
 
             exclude_types = (
@@ -771,15 +893,25 @@ def extract_peak_data_zip(year):
             df_peak = df_peak[df_peak['State'].isin(VALID_STATES)]
             state_peak = df_peak.groupby(
                 'State'
-            )['Peak_MW'].sum().reset_index()
-            state_peak['Peak_Demand_GW'] = state_peak['Peak_MW'] / 1000.0
+            )[['Summer_MW', 'Winter_MW']].sum().reset_index()
+
+            state_peak['Summer_Peak_Demand_GW'] = (
+                state_peak['Summer_MW'] / 1000.0
+            )
+            state_peak['Winter_Peak_Demand_GW'] = (
+                state_peak['Winter_MW'] / 1000.0
+            )
             state_peak.rename(columns={'State': 'Region'}, inplace=True)
 
-            return state_peak[['Region', 'Peak_Demand_GW']]
+            return state_peak[[
+                'Region', 'Summer_Peak_Demand_GW', 'Winter_Peak_Demand_GW'
+            ]]
 
     except Exception as e:
         print(f"Error parsing peak zip: {e}")
-        return pd.DataFrame(columns=['Region', 'Peak_Demand_GW'])
+        return pd.DataFrame(columns=[
+            'Region', 'Summer_Peak_Demand_GW', 'Winter_Peak_Demand_GW'
+        ])
 
 
 def fetch_live_home_page_data(eia_key, census_key):
@@ -952,8 +1084,11 @@ def fetch_live_home_page_data(eia_key, census_key):
         map_df_all['Energy_pc'] = (
             map_df_all['Energy_Use_TBtu'] * 1_000_000
         ) / map_df_all['Population']
-        map_df_all['Peak_pc'] = (
-            map_df_all['Peak_Demand_GW'] * 1_000_000
+        map_df_all['Summer_Peak_pc'] = (
+            map_df_all['Summer_Peak_Demand_GW'] * 1_000_000
+        ) / map_df_all['Population']
+        map_df_all['Winter_Peak_pc'] = (
+            map_df_all['Winter_Peak_Demand_GW'] * 1_000_000
         ) / map_df_all['Population']
         map_df_all['Emissions_pc'] = (
             map_df_all['Emissions_MMTCO2e'] * 1_000_000
@@ -1012,6 +1147,7 @@ def load_segs_data(csv_path="data/segs.csv"):
 
     metrics = [
         'Site Energy (TWh)', 'Peak Demand, Summer (GW)',
+        'Peak Demand, Winter (GW)',
         'Energy Costs (Bn.$)', 'Emissions (CO2e)', 'Capital Costs (Bn.$)'
     ]
     for m in metrics:
@@ -1072,7 +1208,8 @@ def generate_navbar_html(divisions_dict):
 
 
 def generate_sunburst_row(
-    df_subset, metric_col, path_cols, color_dict=None, tooltip_mapping=None
+    df_subset, metric_col, path_cols, alt_path_cols,
+    color_dict=None, tooltip_mapping=None
 ):
     """Generates Multi-Filtered Sunbursts, grouped with Segmented Toggles."""
     if tooltip_mapping is None:
@@ -1085,7 +1222,7 @@ def generate_sunburst_row(
     if "(" in metric_col and ")" in metric_col:
         unit = metric_col.split('(')[-1].split(')')[0]
 
-    def build_charts(data):
+    def build_charts(data, current_path):
         row_html = (
             "<div style='display: flex; flex-wrap: wrap; "
             "justify-content: space-between; width: 100%;'>"
@@ -1105,8 +1242,8 @@ def generate_sunburst_row(
             unit_str = f" {unit}" if unit else ""
 
             fig = px.sunburst(
-                df_year, path=path_cols, values=metric_col,
-                color=path_cols[0], color_discrete_map=color_dict,
+                df_year, path=current_path, values=metric_col,
+                color=current_path[0], color_discrete_map=color_dict,
                 title=f"Year {year}: {total_val:,.1f}{unit_str}"
             )
 
@@ -1134,6 +1271,9 @@ def generate_sunburst_row(
             chart_div = fig.to_html(
                 full_html=False, include_plotlyjs=False,
                 default_width='100%', config={'responsive': True}
+            ).replace(
+                '<script type="text/javascript">',
+                '<script type="text/template" class="lazy-plotly">'
             )
             row_html += f"<div class='chart-container'>{chart_div}</div>"
         row_html += "</div>"
@@ -1142,88 +1282,102 @@ def generate_sunburst_row(
     # Safely extract unique ID base for the tab controls
     tab_id = "".join(e for e in metric_col if e.isalnum())
 
-    def get_filtered_df(df, sector_val, unknown_val):
+    def get_filtered_df(df, sector_val, unknown_val, p_cols):
         tmp = df.copy()
 
         if sector_val == 'res' and 'Building Sector' in tmp.columns:
-            mask = tmp['Building Sector'].astype(str).str.lower() == 'residential'
+            b_sec = tmp['Building Sector'].astype(str).str.lower()
+            mask = b_sec == 'residential'
             tmp = tmp[mask]
         elif sector_val == 'com' and 'Building Sector' in tmp.columns:
-            mask = tmp['Building Sector'].astype(str).str.lower() == 'commercial'
+            b_sec = tmp['Building Sector'].astype(str).str.lower()
+            mask = b_sec == 'commercial'
             tmp = tmp[mask]
 
         if unknown_val == 'exc' and 'End Use' in tmp.columns:
             tmp = tmp[tmp['End Use'] != 'Unknown']
 
-        for col in path_cols:
+        for col in p_cols:
             if col in tmp.columns:
                 tmp[col] = tmp[col].astype(str).str.replace(' ', '<br>')
 
         return tmp
 
-    # Pre-calculate the 6 visual permutations
-    html_all_inc = build_charts(get_filtered_df(df_subset, 'all', 'inc'))
-    html_all_exc = build_charts(get_filtered_df(df_subset, 'all', 'exc'))
-    html_res_inc = build_charts(get_filtered_df(df_subset, 'res', 'inc'))
-    html_res_exc = build_charts(get_filtered_df(df_subset, 'res', 'exc'))
-    html_com_inc = build_charts(get_filtered_df(df_subset, 'com', 'inc'))
-    html_com_exc = build_charts(get_filtered_df(df_subset, 'com', 'exc'))
+    # Dynamically build the 12 HTML combinations
+    html_combinations = ""
+    for hier_val, p_cols in [('fuel', path_cols), ('bldg', alt_path_cols)]:
+        for sec_val in ['all', 'res', 'com']:
+            for unk_val in ['inc', 'exc']:
+                df_filtered = get_filtered_df(
+                    df_subset, sec_val, unk_val, p_cols
+                )
+                charts_html = build_charts(df_filtered, p_cols)
 
-    combined_html = f"""
-    <div class="filter-panel" style="display: flex; justify-content: center; gap: 30px;
-    margin-bottom: 20px;">
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <span class="toggle-label">Sector:</span>
-            <div class="segmented-control">
-                <input type="radio" id="sec-all-{tab_id}" name="sector-{tab_id}" value="all"
-                checked onchange="updateSunburstFilters(this)">
-                <label for="sec-all-{tab_id}">All</label>
+                active_cls = (
+                    "active-layer" if hier_val == 'fuel' and
+                    sec_val == 'all' and unk_val == 'inc' else ""
+                )
 
-                <input type="radio" id="sec-res-{tab_id}" name="sector-{tab_id}" value="res"
-                onchange="updateSunburstFilters(this)">
-                <label for="sec-res-{tab_id}">Residential</label>
+                html_combinations += (
+                    f"<div class='sunburst-view "
+                    f"view-{hier_val}-{sec_val}-{unk_val} "
+                    f"stack-layer {active_cls}'>\n"
+                    f"    {charts_html}\n"
+                    f"</div>\n"
+                )
 
-                <input type="radio" id="sec-com-{tab_id}" name="sector-{tab_id}" value="com"
-                onchange="updateSunburstFilters(this)">
-                <label for="sec-com-{tab_id}">Commercial</label>
-            </div>
-        </div>
-
-        <div style="display: flex; align-items: center; gap: 10px;">
-            <span class="toggle-label">Unknowns:</span>
-            <div class="segmented-control">
-                <input type="radio" id="unk-inc-{tab_id}" name="unknown-{tab_id}" value="inc"
-                checked onchange="updateSunburstFilters(this)">
-                <label for="unk-inc-{tab_id}">Include</label>
-
-                <input type="radio" id="unk-exc-{tab_id}" name="unknown-{tab_id}" value="exc"
-                onchange="updateSunburstFilters(this)">
-                <label for="unk-exc-{tab_id}">Exclude</label>
-            </div>
-        </div>
-    </div>
-
-    <div class="stack-grid">
-        <div class="sunburst-view view-all-inc stack-layer active-layer">
-            {html_all_inc}
-        </div>
-        <div class="sunburst-view view-all-exc stack-layer">
-            {html_all_exc}
-        </div>
-        <div class="sunburst-view view-res-inc stack-layer">
-            {html_res_inc}
-        </div>
-        <div class="sunburst-view view-res-exc stack-layer">
-            {html_res_exc}
-        </div>
-        <div class="sunburst-view view-com-inc stack-layer">
-            {html_com_inc}
-        </div>
-        <div class="sunburst-view view-com-exc stack-layer">
-            {html_com_exc}
-        </div>
-    </div>
-    """
+    combined_html = (
+        "<div class='filter-panel' style='display: flex; "
+        "justify-content: center; gap: 20px; margin-bottom: 20px; "
+        "flex-wrap: wrap;'>\n"
+        "    <div style='display: flex; align-items: center; gap: 8px;'>\n"
+        "        <span class='toggle-label'>Grouping:</span>\n"
+        "        <div class='segmented-control'>\n"
+        f"            <input type='radio' id='hier-fuel-{tab_id}' "
+        f"name='hierarchy-{tab_id}' value='fuel' checked "
+        "onchange='updateSunburstFilters(this)'>\n"
+        f"            <label for='hier-fuel-{tab_id}'>Fuel First</label>\n"
+        f"            <input type='radio' id='hier-bldg-{tab_id}' "
+        f"name='hierarchy-{tab_id}' value='bldg' "
+        "onchange='updateSunburstFilters(this)'>\n"
+        f"            <label for='hier-bldg-{tab_id}'>Building First</label>\n"
+        "        </div>\n"
+        "    </div>\n"
+        "    <div style='display: flex; align-items: center; gap: 8px;'>\n"
+        "        <span class='toggle-label'>Sector:</span>\n"
+        "        <div class='segmented-control'>\n"
+        f"            <input type='radio' id='sec-all-{tab_id}' "
+        f"name='sector-{tab_id}' value='all' checked "
+        "onchange='updateSunburstFilters(this)'>\n"
+        f"            <label for='sec-all-{tab_id}'>All</label>\n"
+        f"            <input type='radio' id='sec-res-{tab_id}' "
+        f"name='sector-{tab_id}' value='res' "
+        "onchange='updateSunburstFilters(this)'>\n"
+        f"            <label for='sec-res-{tab_id}'>Residential</label>\n"
+        f"            <input type='radio' id='sec-com-{tab_id}' "
+        f"name='sector-{tab_id}' value='com' "
+        "onchange='updateSunburstFilters(this)'>\n"
+        f"            <label for='sec-com-{tab_id}'>Commercial</label>\n"
+        "        </div>\n"
+        "    </div>\n"
+        "    <div style='display: flex; align-items: center; gap: 8px;'>\n"
+        "        <span class='toggle-label'>Unknowns:</span>\n"
+        "        <div class='segmented-control'>\n"
+        f"            <input type='radio' id='unk-inc-{tab_id}' "
+        f"name='unknown-{tab_id}' value='inc' checked "
+        "onchange='updateSunburstFilters(this)'>\n"
+        f"            <label for='unk-inc-{tab_id}'>Include</label>\n"
+        f"            <input type='radio' id='unk-exc-{tab_id}' "
+        f"name='unknown-{tab_id}' value='exc' "
+        "onchange='updateSunburstFilters(this)'>\n"
+        f"            <label for='unk-exc-{tab_id}'>Exclude</label>\n"
+        "        </div>\n"
+        "    </div>\n"
+        "</div>\n"
+        "<div class='stack-grid'>\n"
+        f"{html_combinations}\n"
+        "</div>\n"
+    )
     return combined_html
 
 
@@ -1249,6 +1403,9 @@ def main():
 
     std_path = [
         'Fuel Type', 'End Use', 'Segment Name', 'Building Type', 'Vintage'
+    ]
+    alt_path = [
+        'Building Type', 'Vintage', 'Fuel Type', 'End Use', 'Segment Name'
     ]
 
     # Dynamically build the tooltip mapping dictionary based on real CSV keys
@@ -1280,35 +1437,43 @@ def main():
     # Helper function to generate individual pages
     def build_page_html(data_slice, page_title):
         html_eng = generate_sunburst_row(
-            data_slice, 'Site Energy Use (TBtu)', std_path,
+            data_slice, 'Site Energy Use (TBtu)', std_path, alt_path,
             std_colors, tooltip_mapping
         )
         html_emi = generate_sunburst_row(
-            data_slice, 'Emissions (CO2e)', std_path,
+            data_slice, 'Emissions (CO2e)', std_path, alt_path,
             std_colors, tooltip_mapping
         )
         html_cap = generate_sunburst_row(
-            data_slice, 'Capital Costs (Bn.$)', std_path,
+            data_slice, 'Capital Costs (Bn.$)', std_path, alt_path,
             std_colors, tooltip_mapping
         )
         html_enc = generate_sunburst_row(
-            data_slice, 'Energy Costs (Bn.$)', std_path,
+            data_slice, 'Energy Costs (Bn.$)', std_path, alt_path,
             std_colors, tooltip_mapping
         )
 
         # For Peak Demand we only want Electricity
         peak_df = data_slice[data_slice['Fuel Type'] == 'Elec.']
         peak_path = std_path[1:]
+        alt_peak_path = alt_path.copy()
+        alt_peak_path.remove('Fuel Type')
 
-        html_peak = generate_sunburst_row(
-            peak_df, 'Peak Demand, Summer (GW)', peak_path,
-            tooltip_mapping=tooltip_mapping
+        html_summer_peak = generate_sunburst_row(
+            peak_df, 'Peak Demand, Summer (GW)', peak_path, alt_peak_path,
+            std_colors, tooltip_mapping
+        )
+        html_winter_peak = generate_sunburst_row(
+            peak_df, 'Peak Demand, Winter (GW)', peak_path, alt_peak_path,
+            std_colors, tooltip_mapping
         )
 
         return HTML_TEMPLATE.format(
             css_styles=CSS_STYLES, nav_bar_html=dynamic_navbar,
             page_title=page_title, energy_charts_html=html_eng,
-            emissions_charts_html=html_emi, peak_charts_html=html_peak,
+            emissions_charts_html=html_emi,
+            summer_peak_charts_html=html_summer_peak,
+            winter_peak_charts_html=html_winter_peak,
             cap_cost_charts_html=html_cap, energy_cost_charts_html=html_enc
         )
 
@@ -1316,14 +1481,18 @@ def main():
         print("Generating National view from aggregated CSV...")
         metrics = [
             'Site Energy Use (TBtu)', 'Peak Demand, Summer (GW)',
+            'Peak Demand, Winter (GW)',
             'Energy Costs (Bn.$)', 'Emissions (CO2e)', 'Capital Costs (Bn.$)'
         ]
 
         # Include 'Building Sector' in groupby so it is available for filtering
-        group_cols = ['Year', 'Building Sector'] + std_path
+        group_cols = (
+            ['Year', 'Building Sector'] +
+            list(set(std_path + alt_path))
+        )
         actual_group_cols = [c for c in group_cols if c in df.columns]
 
-        # Use dropna=False so that any 'Unknown' or missing data isn't destroyed
+        # Use dropna=False so 'Unknown' or missing data isn't destroyed
         df_nat = df.groupby(
             actual_group_cols, dropna=False
         )[metrics].sum().reset_index()
@@ -1381,11 +1550,15 @@ def main():
                 full_html=False, include_plotlyjs=False,
                 default_width='100%', default_height='400px',
                 config={'responsive': True}
+            ).replace(
+                '<script type="text/javascript">',
+                '<script type="text/template" class="lazy-plotly">'
             )
 
         # Calculate Absolute Totals
         tot_eng = map_df_all['Energy_Use_TBtu'].sum()
-        tot_peak = map_df_all['Peak_Demand_GW'].sum()
+        tot_summer_peak = map_df_all['Summer_Peak_Demand_GW'].sum()
+        tot_winter_peak = map_df_all['Winter_Peak_Demand_GW'].sum()
         tot_emi = map_df_all['Emissions_MMTCO2e'].sum()
 
         # Calculate Billions for Financials
@@ -1394,85 +1567,107 @@ def main():
 
         # Build Map Titles
         title_eng = f"{seds_year} Site Energy Use: {tot_eng:,.0f} TBtu"
-        title_peak = (
-            f"{peak_year} Peak Demand, Summer: {tot_peak:,.0f} GW<br>"
+        title_summer_peak = (
+            f"{peak_year} Summer Peak: {tot_summer_peak:,.0f} GW<br>"
             f"<span style='font-size:12px; font-weight:normal;'>"
-            f"*Total system peak, not exclusively building demand.</span>"
+            f"*Total system peak demand.</span>"
+        )
+        title_winter_peak = (
+            f"{peak_year} Winter Peak: {tot_winter_peak:,.0f} GW<br>"
+            f"<span style='font-size:12px; font-weight:normal;'>"
+            f"*Total system peak demand.</span>"
         )
         title_emi = f"{seds_year} Emissions: {tot_emi:,.0f} MMTCO2e"
-        title_cap = f"2023 Capital Costs (Equip. Replace): {tot_cap_bn:,.1f} Bn.$"
+        title_cap = (
+            f"2023 Capital Costs: {tot_cap_bn:,.1f} Bn.$<br>"
+            f"<span style='font-size:12px; font-weight:normal;'>"
+            f"*Equipment replacements only.</span>"
+        )
         title_enc = f"{seds_year} Energy Cost: {tot_enc_bn:,.1f} Bn.$"
 
         # Build Per Capita Map Titles
         title_eng_pc = (
-            f"{seds_year} Site Energy Use (MMBtu/Capita)<br>"
-            f"<span style='font-size:12px; font-weight:normal;'>"
-            f"National Total: {tot_eng:,.0f} TBtu</span>"
+            f"{seds_year} Site Energy Use (MMBtu/Capita)"
         )
-        title_peak_pc = (
-            f"{peak_year} Peak Demand, Summer (kW/Capita)<br>"
+        title_summer_peak_pc = (
+            f"{peak_year} Summer Peak (kW/Capita)<br>"
             f"<span style='font-size:12px; font-weight:normal;'>"
-            f"National Total: {tot_peak:,.0f} GW (*Total system peak, "
-            f"not exclusively building demand.)</span>"
+            f"*Total system peak demand.</span>"
+        )
+        title_winter_peak_pc = (
+            f"{peak_year} Winter Peak (kW/Capita)<br>"
+            f"<span style='font-size:12px; font-weight:normal;'>"
+            f"*Total system peak demand.</span>"
         )
         title_emi_pc = (
-            f"{seds_year} Emissions (MTCO2e/Capita)<br>"
-            f"<span style='font-size:12px; font-weight:normal;'>"
-            f"National Total: {tot_emi:,.0f} MMTCO2e</span>"
+            f"{seds_year} Emissions (MTCO2e/Capita)"
         )
         title_cap_pc = (
-            f"2023 CapEx ($/Capita)<br>"
-            f"<span style='font-size:12px; font-weight:normal;'>"
-            f"National Total: {tot_cap_bn:,.1f} Bn.$</span>"
+            "2023 Capital Costs ($/Capita)<br>"
+            "<span style='font-size:12px; font-weight:normal;'>"
+            "Equipment replacements only.</span>"
         )
         title_enc_pc = (
-            f"{seds_year} Energy Cost ($/Capita)<br>"
-            f"<span style='font-size:12px; font-weight:normal;'>"
-            f"National Total: {tot_enc_bn:,.1f} Bn.$</span>"
+            f"{seds_year} Energy Cost ($/Capita)"
         )
 
         map_eng = generate_map_panel(
-            map_df_all, 'Energy_Use_TBtu', title_eng, "Site Energy Use (TBtu)"
+            map_df_all, 'Energy_Use_TBtu', title_eng,
+            "Site Energy Use (TBtu)"
         )
-        map_peak = generate_map_panel(
-            map_df_all, 'Peak_Demand_GW', title_peak, "Peak Demand, Summer (GW)"
+        map_summer_peak = generate_map_panel(
+            map_df_all, 'Summer_Peak_Demand_GW', title_summer_peak,
+            "Peak Demand, Summer (GW)"
+        )
+        map_winter_peak = generate_map_panel(
+            map_df_all, 'Winter_Peak_Demand_GW', title_winter_peak,
+            "Peak Demand, Winter (GW)"
         )
         map_emi = generate_map_panel(
-            map_df_all, 'Emissions_MMTCO2e', title_emi, "Emissions (MMTCO2e)"
+            map_df_all, 'Emissions_MMTCO2e', title_emi,
+            "Emissions (MMTCO2e)"
         )
         map_cap = generate_map_panel(
-            map_df_all, 'Capital_Cost_M$', title_cap, "Capital Expenditures (M$)",
-            is_ahs=True
+            map_df_all, 'Capital_Cost_M$', title_cap,
+            "Capital Expenditures (M$)", is_ahs=True
         )
         map_enc = generate_map_panel(
-            map_df_all, 'Energy_Cost_M$', title_enc, "Energy Cost (M$)"
+            map_df_all, 'Energy_Cost_M$', title_enc,
+            "Energy Cost (M$)"
         )
 
         map_eng_pc = generate_map_panel(
-            map_df_all, 'Energy_pc', title_eng_pc, "Site Energy Use (MMBtu/Capita)",
-            fmt=",.0f"
+            map_df_all, 'Energy_pc', title_eng_pc,
+            "Site Energy Use (MMBtu/Capita)", fmt=",.0f"
         )
-        map_peak_pc = generate_map_panel(
-            map_df_all, 'Peak_pc', title_peak_pc, "Peak Demand, Summer (kW/Capita)",
-            fmt=",.2f"
+        map_summer_peak_pc = generate_map_panel(
+            map_df_all, 'Summer_Peak_pc', title_summer_peak_pc,
+            "Peak Demand, Summer (kW/Capita)", fmt=",.2f"
+        )
+        map_winter_peak_pc = generate_map_panel(
+            map_df_all, 'Winter_Peak_pc', title_winter_peak_pc,
+            "Peak Demand, Winter (kW/Capita)", fmt=",.2f"
         )
         map_emi_pc = generate_map_panel(
-            map_df_all, 'Emissions_pc', title_emi_pc, "Emissions (MTCO2e/Capita)",
-            fmt=",.1f"
+            map_df_all, 'Emissions_pc', title_emi_pc,
+            "Emissions (MTCO2e/Capita)", fmt=",.1f"
         )
         map_cap_pc = generate_map_panel(
-            map_df_all, 'CapCost_pc', title_cap_pc, "CapEx ($/Capita)",
-            is_ahs=True, fmt="$,.0f"
+            map_df_all, 'CapCost_pc', title_cap_pc,
+            "CapEx ($/Capita)", is_ahs=True, fmt="$,.0f"
         )
         map_enc_pc = generate_map_panel(
-            map_df_all, 'Cost_pc', title_enc_pc, "Energy Cost ($/Capita)",
-            fmt="$,.0f"
+            map_df_all, 'Cost_pc', title_enc_pc,
+            "Energy Cost ($/Capita)", fmt="$,.0f"
         )
 
         final_idx_html = INDEX_TEMPLATE.format(
             css_styles=CSS_STYLES, nav_bar_html=dynamic_navbar,
             map_energy=map_eng, map_energy_pc=map_eng_pc,
-            map_peak=map_peak, map_peak_pc=map_peak_pc,
+            map_summer_peak=map_summer_peak,
+            map_summer_peak_pc=map_summer_peak_pc,
+            map_winter_peak=map_winter_peak,
+            map_winter_peak_pc=map_winter_peak_pc,
             map_emissions=map_emi, map_emissions_pc=map_emi_pc,
             map_capcost=map_cap, map_capcost_pc=map_cap_pc,
             map_energycost=map_enc, map_energycost_pc=map_enc_pc
