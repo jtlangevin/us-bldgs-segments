@@ -309,7 +309,9 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </div>
 
             <div id="PeakDemand_Winter" class="tab-content">
-                <h2 style="text-align: center; font-weight: 400;">
+                <h2 id="WinterPeakAnchor"
+                    style="text-align: center; font-weight: 400;
+                    margin-top: 40px;">
                     Peak Demand, Winter (GW)
                 </h2>
                 <div class="chart-row">{winter_peak_charts_html}</div>
@@ -362,6 +364,17 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 '.tab-content.active .active-layer script.lazy-plotly'
             );
             activeScripts.forEach(template => {{
+                // Skip if the Thermal Loads toggle is OFF
+                const wrapper = template.closest('[id^="thermal-wrapper-"]');
+                if (wrapper && wrapper.style.display === 'none') return;
+
+                // Skip if hidden by the Year/Combined filters
+                const plotContainer = template.closest(
+                    '.thermal-plot-container'
+                );
+                if (plotContainer &&
+                    plotContainer.style.display === 'none') return;
+
                 const script = document.createElement('script');
                 script.textContent = template.textContent;
                 document.body.appendChild(script);
@@ -378,6 +391,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 document.querySelectorAll(
                     '.tab-content.active .active-layer .plotly-graph-div'
                 ).forEach(plot => {{
+                    const wrapper = plot.closest('[id^="thermal-wrapper-"]');
+                    if (wrapper && wrapper.style.display === 'none') return;
+
+                    const plotContainer = plot.closest(
+                        '.thermal-plot-container'
+                    );
+                    if (plotContainer &&
+                        plotContainer.style.display === 'none') return;
+
                     if (plot && plot.layout) {{
                         Plotly.Plots.resize(plot);
                     }}
@@ -433,6 +455,39 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 }}
             }});
 
+            renderVisibleCharts();
+        }}
+
+        function toggleThermalLoads(element, isShow) {{
+            const tab = element.closest('.tab-content');
+            if (!tab) return;
+            const wrappers = tab.querySelectorAll('[id^="thermal-wrapper-"]');
+            wrappers.forEach(w => {{
+                w.style.display = isShow ? 'flex' : 'none';
+            }});
+            if (isShow) {{
+                renderVisibleCharts();
+            }}
+        }}
+
+        function updateThermalView(viewId) {{
+            const viewType = document.querySelector(
+                `input[name='env-view-${{viewId}}']:checked`
+            ).value;
+            const year = document.querySelector(
+                `input[name='env-year-${{viewId}}']:checked`
+            ).value;
+
+            const containers = document.querySelectorAll(
+                `#thermal-wrapper-${{viewId}} .thermal-plot-container`
+            );
+            containers.forEach(c => {{
+                if (c.dataset.year === year && c.dataset.view === viewType) {{
+                    c.style.display = 'flex';
+                }} else {{
+                    c.style.display = 'none';
+                }}
+            }});
             renderVisibleCharts();
         }}
 
@@ -1115,7 +1170,7 @@ def fetch_live_home_page_data(eia_key, census_key):
         raise RuntimeError(f"API Fetch Request failed entirely: {e}")
 
 
-def load_segs_data(csv_path="data/segs.csv"):
+def load_segs_data(csv_path="data/segs_env.csv"):
     """
     Loads and cleans data from data/segs.csv for the state detail pages.
     """
@@ -1123,7 +1178,7 @@ def load_segs_data(csv_path="data/segs.csv"):
         print(f"Warning: {csv_path} not found.")
         return pd.DataFrame()
 
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(csv_path, low_memory=False)
     df.columns = df.columns.str.strip()
 
     # Standardize column naming just in case
@@ -1145,6 +1200,13 @@ def load_segs_data(csv_path="data/segs.csv"):
     if 'Region' in df.columns:
         df = df[~df['Region'].isin(['AK', 'HI'])]
 
+    if 'Envelope Flag' not in df.columns:
+        df['Envelope Flag'] = 'equipment'
+    df['Envelope Flag'] = (
+        df['Envelope Flag'].fillna('equipment')
+        .astype(str).str.strip().str.lower()
+    )
+
     metrics = [
         'Site Energy (TWh)', 'Peak Demand, Summer (GW)',
         'Peak Demand, Winter (GW)',
@@ -1152,9 +1214,9 @@ def load_segs_data(csv_path="data/segs.csv"):
     ]
     for m in metrics:
         if m in df.columns:
-            df[m] = pd.to_numeric(
-                df[m], errors='coerce'
-            ).fillna(0).clip(lower=0)
+            df[m] = pd.to_numeric(df[m], errors='coerce').fillna(0)
+            equip_mask = df['Envelope Flag'] != 'envelope'
+            df.loc[equip_mask, m] = df.loc[equip_mask, m].clip(lower=0)
 
     # Automatically convert TWh to TBtu for consistency with maps
     if 'Site Energy (TWh)' in df.columns:
@@ -1168,6 +1230,7 @@ def load_segs_data(csv_path="data/segs.csv"):
         'Fuel Type Tooltip', 'End Use Tooltip', 'Segment Tooltip',
         'Building Type Tooltip', 'Vintage Tooltip'
     ]
+
     for p in path_cols + tooltip_cols:
         if p in df.columns:
             df[p] = df[p].fillna('Unknown')
@@ -1217,18 +1280,26 @@ def generate_sunburst_row(
 
     years = [2026, 2035, 2050]
 
-    # Extract unit safely from metric name (e.g., 'TBtu')
-    unit = ""
-    if "(" in metric_col and ")" in metric_col:
-        unit = metric_col.split('(')[-1].split(')')[0]
+    def build_charts(data, current_path, view_id):
+        if 'Envelope Flag' in data.columns:
+            df_equip = data[data['Envelope Flag'] != 'envelope']
+            df_env = data[data['Envelope Flag'] == 'envelope']
+        else:
+            df_equip = data
+            df_env = pd.DataFrame()
 
-    def build_charts(data, current_path):
         row_html = (
             "<div style='display: flex; flex-wrap: wrap; "
             "justify-content: space-between; width: 100%;'>"
         )
+
+        # Extract unit safely from metric name (e.g., 'TBtu')
+        unit = ""
+        if "(" in metric_col and ")" in metric_col:
+            unit = metric_col.split('(')[-1].split(')')[0]
+
         for year in years:
-            df_year = data[data['Year'] == year]
+            df_year = df_equip[df_equip['Year'] == year].copy()
 
             if df_year.empty or df_year[metric_col].sum() == 0:
                 row_html += (
@@ -1276,7 +1347,319 @@ def generate_sunburst_row(
                 '<script type="text/template" class="lazy-plotly">'
             )
             row_html += f"<div class='chart-container'>{chart_div}</div>"
-        row_html += "</div>"
+
+        row_html += "</div>\n"
+
+        # Append Envelope Diverging Bar Charts (Filtered by Year and View)
+        if not df_env.empty and (df_env[metric_col] != 0).any():
+            row_html += (
+                f"<div id='thermal-wrapper-{view_id}' "
+                f"style='display: none; flex-direction: column; "
+                f"width: 100%;'>\n"
+                f"<h2 style='text-align:center; font-weight:400; "
+                f"margin-top:40px; margin-bottom:10px;'>"
+                f"Thermal Load Components</h2>\n"
+            )
+
+            if metric_col == 'Peak Demand, Winter (GW)':
+                row_html += (
+                    "<p style='text-align:center; font-size:13px; "
+                    "color:#6e7781; margin-top:-5px; "
+                    "margin-bottom:15px; max-width:800px; "
+                    "margin-left:auto; margin-right:auto;'>\n"
+                    "* Excludes heating gains from people, equipment, and "
+                    "windows solar due to lack of hourly load shapes for "
+                    "these peak load components.\n</p>\n"
+                )
+
+            # Toggles for View (Split/Combined) and Year
+            row_html += (
+                f"<div style='display: flex; justify-content: center; "
+                f"gap: 20px; margin-bottom: 20px; flex-wrap: wrap;'>\n"
+                f"    <div class='segmented-control'>\n"
+                f"        <input type='radio' id='env-comb-{view_id}' "
+                f"name='env-view-{view_id}' value='combined' checked "
+                f"onchange=\"updateThermalView('{view_id}')\">\n"
+                f"        <label for='env-comb-{view_id}'>Combined "
+                f"Impact</label>\n"
+                f"        <input type='radio' id='env-split-{view_id}' "
+                f"name='env-view-{view_id}' value='split' "
+                f"onchange=\"updateThermalView('{view_id}')\">\n"
+                f"        <label for='env-split-{view_id}'>Heating vs. "
+                f"Cooling</label>\n"
+                f"    </div>\n"
+                f"    <div class='segmented-control'>\n"
+                f"        <input type='radio' id='yr-2026-{view_id}' "
+                f"name='env-year-{view_id}' value='2026' checked "
+                f"onchange=\"updateThermalView('{view_id}')\">\n"
+                f"        <label for='yr-2026-{view_id}'>2026</label>\n"
+                f"        <input type='radio' id='yr-2035-{view_id}' "
+                f"name='env-year-{view_id}' value='2035' "
+                f"onchange=\"updateThermalView('{view_id}')\">\n"
+                f"        <label for='yr-2035-{view_id}'>2035</label>\n"
+                f"        <input type='radio' id='yr-2050-{view_id}' "
+                f"name='env-year-{view_id}' value='2050' "
+                f"onchange=\"updateThermalView('{view_id}')\">\n"
+                f"        <label for='yr-2050-{view_id}'>2050</label>\n"
+                f"    </div>\n"
+                f"</div>\n"
+            )
+
+            for year in years:
+                df_yr = df_env[df_env['Year'] == year].copy()
+                if not df_yr.empty and (df_yr[metric_col] != 0).any():
+                    df_res = df_yr[
+                        df_yr['Building Sector'].fillna('').str.lower()
+                        .str.contains('res')
+                    ]
+                    df_com = df_yr[
+                        df_yr['Building Sector'].fillna('').str.lower()
+                        .str.contains('com')
+                    ]
+
+                    # --- SPLIT VIEW (HEATING AND COOLING) ---
+                    row_html += (
+                        f"<div class='thermal-plot-container' "
+                        f"data-year='{year}' data-view='split' "
+                        f"style='display: none; "
+                        f"flex-direction: column; width: 100%;'>\n"
+                    )
+
+                    for s_name, s_df in [
+                        ("Residential", df_res), ("Commercial", df_com)
+                    ]:
+                        if not s_df.empty and (s_df[metric_col] != 0).any():
+                            # Calculate global x-axis range for this sector
+                            max_x = 0
+                            min_x = 0
+                            for end_use in ['Heat.', 'Cool.']:
+                                eu_df = s_df[s_df['End Use'] == end_use]
+                                if not eu_df.empty:
+                                    agg = eu_df.groupby(
+                                        ['Segment Name',
+                                         'Building Type Tooltip']
+                                    )[metric_col].sum().reset_index()
+
+                                    p_sum = agg[agg[metric_col] > 0].groupby(
+                                        'Segment Name'
+                                    )[metric_col].sum()
+                                    n_sum = agg[agg[metric_col] < 0].groupby(
+                                        'Segment Name'
+                                    )[metric_col].sum()
+
+                                    if not p_sum.empty:
+                                        max_x = max(max_x, p_sum.max())
+                                    if not n_sum.empty:
+                                        min_x = min(min_x, n_sum.min())
+
+                            x_range = [min_x * 1.1, max_x * 1.1]
+                            if x_range[0] == 0 and x_range[1] == 0:
+                                x_range = [-1, 1]
+
+                            row_html += (
+                                f"<h3 style='text-align:center; "
+                                f"font-weight:500; color:#57606a; "
+                                f"margin-top:30px;'>"
+                                f"{s_name} Components</h3>\n"
+                                f"<div style='display: flex; flex-wrap: wrap; "
+                                f"justify-content: center; gap: 20px; "
+                                f"width: 100%;'>\n"
+                            )
+
+                            for eu_val, eu_lbl in [
+                                ('Heat.', 'Heating'), ('Cool.', 'Cooling')
+                            ]:
+                                eu_df = s_df[s_df['End Use'] == eu_val]
+
+                                if not eu_df.empty and (
+                                    eu_df[metric_col] != 0
+                                ).any():
+                                    df_agg = eu_df.groupby(
+                                        ['Segment Name',
+                                         'Building Type Tooltip']
+                                    )[metric_col].sum().reset_index()
+
+                                    df_agg = df_agg[df_agg[metric_col] != 0]
+
+                                    fig_bar = px.bar(
+                                        df_agg,
+                                        y='Segment Name',
+                                        x=metric_col,
+                                        color='Building Type Tooltip',
+                                        custom_data=['Building Type Tooltip'],
+                                        orientation='h',
+                                        barmode='relative',
+                                        title=f"{eu_lbl}"
+                                    )
+
+                                    ht_split = (
+                                        "Component: %{y}<br>"
+                                        "Building Type: %{customdata[0]}<br>"
+                                        f"{metric_col}: "
+                                        "%{x:,.1f}<extra></extra>"
+                                    )
+
+                                    fig_bar.update_traces(
+                                        hovertemplate=ht_split
+                                    )
+
+                                    fig_bar.update_layout(
+                                        font=dict(family=GITHUB_FONT),
+                                        margin=dict(t=40, l=0, r=0, b=80),
+                                        autosize=True, height=450,
+                                        xaxis_title=metric_col,
+                                        yaxis_title="",
+                                        legend_title_text="",
+                                        legend=dict(
+                                            orientation="h", yanchor="top",
+                                            y=-0.25, xanchor="center", x=0.5
+                                        )
+                                    )
+                                    fig_bar.update_yaxes(
+                                        categoryorder='total ascending'
+                                    )
+                                    fig_bar.update_xaxes(range=x_range)
+
+                                    bar_div = fig_bar.to_html(
+                                        full_html=False,
+                                        include_plotlyjs=False,
+                                        default_width='100%',
+                                        config={'responsive': True}
+                                    ).replace(
+                                        '<script type="text/javascript">',
+                                        '<script type="text/template" '
+                                        'class="lazy-plotly">'
+                                    )
+                                    row_html += (
+                                        f"<div class='chart-container' "
+                                        f"style='flex: 1 1 45%; "
+                                        f"min-width:300px; background: white; "
+                                        f"padding: 20px; border-radius: 8px; "
+                                        f"box-shadow: 0 2px 4px "
+                                        f"rgba(0,0,0,0.1);'>{bar_div}"
+                                        f"</div>\n"
+                                    )
+                                else:
+                                    row_html += (
+                                        f"<div class='chart-container' "
+                                        f"style='flex: 1 1 45%; "
+                                        f"min-width:300px; background: white; "
+                                        f"padding: 20px; border-radius: 8px; "
+                                        f"box-shadow: 0 2px 4px "
+                                        f"rgba(0,0,0,0.1); display:flex; "
+                                        f"align-items:center; "
+                                        f"justify-content:center;'>"
+                                        f"<p style='color:#57606a;'>"
+                                        f"No {eu_lbl} data</p></div>\n"
+                                    )
+
+                            row_html += "</div>\n"
+                    row_html += "</div>\n"
+
+                    # --- COMBINED VIEW (NET IMPACT) ---
+                    disp_comb = 'flex' if year == 2026 else 'none'
+                    row_html += (
+                        f"<div class='thermal-plot-container' "
+                        f"data-year='{year}' data-view='combined' "
+                        f"style='display: {disp_comb}; flex-wrap: wrap; "
+                        f"justify-content: center; gap: 20px; "
+                        f"width: 100%; margin-top:30px;'>\n"
+                    )
+
+                    max_c = 0
+                    min_c = 0
+                    for s_name, s_df in [
+                        ("Residential", df_res), ("Commercial", df_com)
+                    ]:
+                        if not s_df.empty and (s_df[metric_col] != 0).any():
+                            agg = s_df.groupby(
+                                ['Segment Name', 'Building Type Tooltip']
+                            )[metric_col].sum().reset_index()
+
+                            p_sum = agg[agg[metric_col] > 0].groupby(
+                                'Segment Name'
+                            )[metric_col].sum()
+                            n_sum = agg[agg[metric_col] < 0].groupby(
+                                'Segment Name'
+                            )[metric_col].sum()
+
+                            if not p_sum.empty:
+                                max_c = max(max_c, p_sum.max())
+                            if not n_sum.empty:
+                                min_c = min(min_c, n_sum.min())
+
+                    x_range_c = [min_c * 1.1, max_c * 1.1]
+                    if x_range_c[0] == 0 and x_range_c[1] == 0:
+                        x_range_c = [-1, 1]
+
+                    for s_name, s_df in [
+                        ("Residential", df_res), ("Commercial", df_com)
+                    ]:
+                        if not s_df.empty and (s_df[metric_col] != 0).any():
+                            df_agg = s_df.groupby(
+                                ['Segment Name', 'Building Type Tooltip']
+                            )[metric_col].sum().reset_index()
+
+                            df_agg = df_agg[df_agg[metric_col] != 0]
+
+                            fig_bar = px.bar(
+                                df_agg,
+                                y='Segment Name',
+                                x=metric_col,
+                                color='Building Type Tooltip',
+                                custom_data=['Building Type Tooltip'],
+                                orientation='h',
+                                barmode='relative',
+                                title=f"{s_name} Combined Impact"
+                            )
+
+                            ht_comb = (
+                                "Component: %{y}<br>"
+                                "Building Type: %{customdata[0]}<br>"
+                                f"{metric_col}: "
+                                "%{x:,.1f}<extra></extra>"
+                            )
+
+                            fig_bar.update_traces(hovertemplate=ht_comb)
+
+                            fig_bar.update_layout(
+                                font=dict(family=GITHUB_FONT),
+                                margin=dict(t=40, l=0, r=0, b=80),
+                                autosize=True, height=450,
+                                xaxis_title=metric_col,
+                                yaxis_title="",
+                                legend_title_text="",
+                                legend=dict(
+                                    orientation="h", yanchor="top",
+                                    y=-0.25, xanchor="center", x=0.5
+                                )
+                            )
+                            fig_bar.update_yaxes(
+                                categoryorder='total ascending'
+                            )
+                            fig_bar.update_xaxes(range=x_range_c)
+
+                            bar_div = fig_bar.to_html(
+                                full_html=False, include_plotlyjs=False,
+                                default_width='100%',
+                                config={'responsive': True}
+                            ).replace(
+                                '<script type="text/javascript">',
+                                '<script type="text/template" '
+                                'class="lazy-plotly">'
+                            )
+                            row_html += (
+                                f"<div class='chart-container' "
+                                f"style='flex: 1 1 45%; min-width:300px; "
+                                f"background: white; padding: 20px; "
+                                f"border-radius: 8px; box-shadow: 0 2px 4px "
+                                f"rgba(0,0,0,0.1);'>{bar_div}</div>\n"
+                            )
+
+                    row_html += "</div>\n"
+
+            row_html += "</div>\n"
+
         return row_html
 
     # Safely extract unique ID base for the tab controls
@@ -1308,10 +1691,11 @@ def generate_sunburst_row(
     for hier_val, p_cols in [('fuel', path_cols), ('bldg', alt_path_cols)]:
         for sec_val in ['all', 'res', 'com']:
             for unk_val in ['inc', 'exc']:
+                view_id = f"{tab_id}-{hier_val}-{sec_val}-{unk_val}"
                 df_filtered = get_filtered_df(
                     df_subset, sec_val, unk_val, p_cols
                 )
-                charts_html = build_charts(df_filtered, p_cols)
+                charts_html = build_charts(df_filtered, p_cols, view_id)
 
                 active_cls = (
                     "active-layer" if hier_val == 'fuel' and
@@ -1373,6 +1757,20 @@ def generate_sunburst_row(
         f"            <label for='unk-exc-{tab_id}'>Exclude</label>\n"
         "        </div>\n"
         "    </div>\n"
+        "    <div style='display: flex; align-items: center; gap: 8px;'>\n"
+        "        <span class='toggle-label'>Thermal Load "
+        "Components:</span>\n"
+        "        <div class='segmented-control'>\n"
+        f"            <input type='radio' id='therm-hide-{tab_id}' "
+        f"name='therm-toggle-{tab_id}' value='hide' checked "
+        "onchange=\"toggleThermalLoads(this, false)\">\n"
+        f"            <label for='therm-hide-{tab_id}'>Hide</label>\n"
+        f"            <input type='radio' id='therm-show-{tab_id}' "
+        f"name='therm-toggle-{tab_id}' value='show' "
+        "onchange=\"toggleThermalLoads(this, true)\">\n"
+        f"            <label for='therm-show-{tab_id}'>Show</label>\n"
+        "        </div>\n"
+        "    </div>\n"
         "</div>\n"
         "<div class='stack-grid'>\n"
         f"{html_combinations}\n"
@@ -1398,7 +1796,7 @@ def main():
     )
 
     # Load Real Detail Data from CSV
-    df = load_segs_data("data/segs.csv")
+    df = load_segs_data("data/segs_env.csv")
     dynamic_navbar = generate_navbar_html(CENSUS_DIVISIONS)
 
     std_path = [
@@ -1453,8 +1851,14 @@ def main():
             std_colors, tooltip_mapping
         )
 
-        # For Peak Demand we only want Electricity
-        peak_df = data_slice[data_slice['Fuel Type'] == 'Elec.']
+        # For Peak Demand we want Electricity for equipment,
+        # but ALL envelope loads
+        peak_mask = (
+            (data_slice['Fuel Type'] == 'Elec.') |
+            (data_slice['Envelope Flag'] == 'envelope')
+        )
+        peak_df = data_slice[peak_mask]
+
         peak_path = std_path[1:]
         alt_peak_path = alt_path.copy()
         alt_peak_path.remove('Fuel Type')
@@ -1485,10 +1889,16 @@ def main():
             'Energy Costs (Bn.$)', 'Emissions (CO2e)', 'Capital Costs (Bn.$)'
         ]
 
-        # Include 'Building Sector' in groupby so it is available for filtering
+        # Include tooltip columns so they survive the National aggregation
+        tooltip_cols_to_keep = [
+            'Fuel Type Tooltip', 'End Use Tooltip', 'Segment Tooltip',
+            'Building Type Tooltip', 'Vintage Tooltip'
+        ]
+
+        # Include 'Building Sector' and 'Envelope Flag' in groupby
         group_cols = (
-            ['Year', 'Building Sector'] +
-            list(set(std_path + alt_path))
+            ['Year', 'Building Sector', 'Envelope Flag'] +
+            list(set(std_path + alt_path + tooltip_cols_to_keep))
         )
         actual_group_cols = [c for c in group_cols if c in df.columns]
 
@@ -1520,7 +1930,7 @@ def main():
         ):
             fig = px.choropleth(
                 data, locations='Region', locationmode="USA-states",
-                color=metric, scope="usa", title=title,
+                color=metric, scope="usa",
                 color_continuous_scale="Teal"
             )
 
@@ -1542,17 +1952,23 @@ def main():
 
             fig.update_layout(
                 font=dict(family=GITHUB_FONT, size=12),
-                margin=dict(t=40, l=0, r=0, b=0),
+                margin=dict(t=10, l=0, r=0, b=0),
                 coloraxis_colorbar=dict(title=None, thickness=10, len=0.7),
                 autosize=True
             )
-            return fig.to_html(
+            chart_div = fig.to_html(
                 full_html=False, include_plotlyjs=False,
-                default_width='100%', default_height='400px',
+                default_width='100%', default_height='380px',
                 config={'responsive': True}
             ).replace(
                 '<script type="text/javascript">',
                 '<script type="text/template" class="lazy-plotly">'
+            )
+
+            return (
+                f"<div style='text-align: center; font-size: 16px; "
+                f"font-weight: 600; padding: 0 10px;'>{title}</div>\n"
+                f"{chart_div}"
             )
 
         # Calculate Absolute Totals
