@@ -1283,7 +1283,24 @@ def generate_sunburst_row(
     def build_charts(data, current_path, view_id):
         if 'Envelope Flag' in data.columns:
             df_equip = data[data['Envelope Flag'] != 'envelope']
-            df_env = data[data['Envelope Flag'] == 'envelope']
+            df_env = data[data['Envelope Flag'] == 'envelope'].copy()
+
+            # Suppress Solar Windows and rename Conduction Windows for Cap Costs
+            if metric_col == 'Capital Costs (Bn.$)':
+                mask_solar = df_env[
+                    'Segment Name'].astype(str).str.contains(
+                        r'Windows.*\(Solar\)', case=False, regex=True)
+                df_env = df_env[~mask_solar]
+
+                df_env['Segment Name'] = (
+                    df_env['Segment Name'].astype(str)
+                    .str.replace(r'Windows.*\(Conduction\)', 'Windows', case=False, regex=True)
+                )
+                if 'Segment Tooltip' in df_env.columns:
+                    df_env['Segment Tooltip'] = (
+                        df_env['Segment Tooltip'].astype(str)
+                        .str.replace(r'Windows.*\(Conduction\)', 'Windows', case=False, regex=True)
+                    )
         else:
             df_equip = data
             df_env = pd.DataFrame()
@@ -1367,27 +1384,43 @@ def generate_sunburst_row(
                     "color:#6e7781; margin-top:-5px; "
                     "margin-bottom:15px; max-width:800px; "
                     "margin-left:auto; margin-right:auto;'>\n"
-                    "* Excludes heating gains from people, equipment, and "
-                    "windows solar due to lack of hourly load shapes for "
-                    "these peak load components.\n</p>\n"
+                    "* Heating components exclude internal gains and "
+                    "windows solar, which currently lack load shapes "
+                    "needed to determine impacts on peak heating loads.\n</p>\n"
                 )
 
             # Toggles for View (Split/Combined) and Year
+            is_cap_cost = (metric_col == 'Capital Costs (Bn.$)')
+
+            if is_cap_cost:
+                # Hide the view toggle, but keep a checked radio button so JS works
+                view_toggle_html = (
+                    f"<div style='display: none;'>\n"
+                    f"    <input type='radio' id='env-comb-{view_id}' "
+                    f"name='env-view-{view_id}' value='combined' checked>\n"
+                    f"</div>\n"
+                )
+            else:
+                # Standard visible toggle
+                view_toggle_html = (
+                    f"    <div class='segmented-control'>\n"
+                    f"        <input type='radio' id='env-comb-{view_id}' "
+                    f"name='env-view-{view_id}' value='combined' checked "
+                    f"onchange=\"updateThermalView('{view_id}')\">\n"
+                    f"        <label for='env-comb-{view_id}'>Combined "
+                    f"Impact</label>\n"
+                    f"        <input type='radio' id='env-split-{view_id}' "
+                    f"name='env-view-{view_id}' value='split' "
+                    f"onchange=\"updateThermalView('{view_id}')\">\n"
+                    f"        <label for='env-split-{view_id}'>Heating vs. "
+                    f"Cooling</label>\n"
+                    f"    </div>\n"
+                )
+
             row_html += (
                 f"<div style='display: flex; justify-content: center; "
                 f"gap: 20px; margin-bottom: 20px; flex-wrap: wrap;'>\n"
-                f"    <div class='segmented-control'>\n"
-                f"        <input type='radio' id='env-comb-{view_id}' "
-                f"name='env-view-{view_id}' value='combined' checked "
-                f"onchange=\"updateThermalView('{view_id}')\">\n"
-                f"        <label for='env-comb-{view_id}'>Combined "
-                f"Impact</label>\n"
-                f"        <input type='radio' id='env-split-{view_id}' "
-                f"name='env-view-{view_id}' value='split' "
-                f"onchange=\"updateThermalView('{view_id}')\">\n"
-                f"        <label for='env-split-{view_id}'>Heating vs. "
-                f"Cooling</label>\n"
-                f"    </div>\n"
+                f"{view_toggle_html}"
                 f"    <div class='segmented-control'>\n"
                 f"        <input type='radio' id='yr-2026-{view_id}' "
                 f"name='env-year-{view_id}' value='2026' checked "
@@ -1418,143 +1451,174 @@ def generate_sunburst_row(
                     ]
 
                     # --- SPLIT VIEW (HEATING AND COOLING) ---
-                    row_html += (
-                        f"<div class='thermal-plot-container' "
-                        f"data-year='{year}' data-view='split' "
-                        f"style='display: none; "
-                        f"flex-direction: column; width: 100%;'>\n"
-                    )
+                    # Only build split view if this is NOT the Capital Costs tab
+                    if not is_cap_cost:
+                        row_html += (
+                            f"<div class='thermal-plot-container' "
+                            f"data-year='{year}' data-view='split' "
+                            f"style='display: none; "
+                            f"flex-direction: column; width: 100%;'>\n"
+                        )
 
-                    for s_name, s_df in [
-                        ("Residential", df_res), ("Commercial", df_com)
-                    ]:
-                        if not s_df.empty and (s_df[metric_col] != 0).any():
-                            # Calculate global x-axis range for this sector
-                            max_x = 0
-                            min_x = 0
-                            for end_use in ['Heat.', 'Cool.']:
-                                eu_df = s_df[s_df['End Use'] == end_use]
-                                if not eu_df.empty:
-                                    agg = eu_df.groupby(
-                                        ['Segment Name',
-                                         'Building Type Tooltip']
-                                    )[metric_col].sum().reset_index()
+                        for s_name, s_df in [
+                            ("Residential", df_res), ("Commercial", df_com)
+                        ]:
+                            if not s_df.empty and (s_df[metric_col] != 0).any():
+                                # Calculate global x-axis range for this sector
+                                max_x = 0
+                                min_x = 0
+                                for end_use in ['Heat.', 'Cool.']:
+                                    eu_df = s_df[s_df['End Use'] == end_use]
+                                    if not eu_df.empty:
+                                        agg = eu_df.groupby(
+                                            ['Segment Name',
+                                             'Building Type Tooltip']
+                                        )[metric_col].sum().reset_index()
 
-                                    p_sum = agg[agg[metric_col] > 0].groupby(
-                                        'Segment Name'
-                                    )[metric_col].sum()
-                                    n_sum = agg[agg[metric_col] < 0].groupby(
-                                        'Segment Name'
-                                    )[metric_col].sum()
+                                        p_sum = agg[agg[metric_col] > 0].groupby(
+                                            'Segment Name'
+                                        )[metric_col].sum()
+                                        n_sum = agg[agg[metric_col] < 0].groupby(
+                                            'Segment Name'
+                                        )[metric_col].sum()
 
-                                    if not p_sum.empty:
-                                        max_x = max(max_x, p_sum.max())
-                                    if not n_sum.empty:
-                                        min_x = min(min_x, n_sum.min())
+                                        if not p_sum.empty:
+                                            max_x = max(max_x, p_sum.max())
+                                        if not n_sum.empty:
+                                            min_x = min(min_x, n_sum.min())
 
-                            x_range = [min_x * 1.1, max_x * 1.1]
-                            if x_range[0] == 0 and x_range[1] == 0:
-                                x_range = [-1, 1]
+                                range_span = max_x - min_x
+                                pad = range_span * 0.25 if range_span != 0 else 1
+                                x_range = [min_x - pad, max_x + pad]
+                                if x_range[0] == 0 and x_range[1] == 0:
+                                    x_range = [-1, 1]
 
-                            row_html += (
-                                f"<h3 style='text-align:center; "
-                                f"font-weight:500; color:#57606a; "
-                                f"margin-top:30px;'>"
-                                f"{s_name} Components</h3>\n"
-                                f"<div style='display: flex; flex-wrap: wrap; "
-                                f"justify-content: center; gap: 20px; "
-                                f"width: 100%;'>\n"
-                            )
+                                row_html += (
+                                    f"<h3 style='text-align:center; "
+                                    f"font-weight:500; color:#57606a; "
+                                    f"margin-top:30px;'>"
+                                    f"{s_name} Components</h3>\n"
+                                    f"<div style='display: flex; flex-wrap: wrap; "
+                                    f"justify-content: center; gap: 20px; "
+                                    f"width: 100%;'>\n"
+                                )
 
-                            for eu_val, eu_lbl in [
-                                ('Heat.', 'Heating'), ('Cool.', 'Cooling')
-                            ]:
-                                eu_df = s_df[s_df['End Use'] == eu_val]
+                                for eu_val, eu_lbl in [
+                                    ('Heat.', 'Heating'), ('Cool.', 'Cooling')
+                                ]:
+                                    eu_df = s_df[s_df['End Use'] == eu_val]
 
-                                if not eu_df.empty and (
-                                    eu_df[metric_col] != 0
-                                ).any():
-                                    df_agg = eu_df.groupby(
-                                        ['Segment Name',
-                                         'Building Type Tooltip']
-                                    )[metric_col].sum().reset_index()
+                                    if not eu_df.empty and (
+                                        eu_df[metric_col] != 0
+                                    ).any():
+                                        df_agg = eu_df.groupby(
+                                            ['Segment Name',
+                                             'Building Type Tooltip']
+                                        )[metric_col].sum().reset_index()
 
-                                    df_agg = df_agg[df_agg[metric_col] != 0]
+                                        df_agg = df_agg[df_agg[metric_col] != 0]
 
-                                    fig_bar = px.bar(
-                                        df_agg,
-                                        y='Segment Name',
-                                        x=metric_col,
-                                        color='Building Type Tooltip',
-                                        custom_data=['Building Type Tooltip'],
-                                        orientation='h',
-                                        barmode='relative',
-                                        title=f"{eu_lbl}"
-                                    )
-
-                                    ht_split = (
-                                        "Component: %{y}<br>"
-                                        "Building Type: %{customdata[0]}<br>"
-                                        f"{metric_col}: "
-                                        "%{x:,.1f}<extra></extra>"
-                                    )
-
-                                    fig_bar.update_traces(
-                                        hovertemplate=ht_split
-                                    )
-
-                                    fig_bar.update_layout(
-                                        font=dict(family=GITHUB_FONT),
-                                        margin=dict(t=40, l=0, r=0, b=80),
-                                        autosize=True, height=450,
-                                        xaxis_title=metric_col,
-                                        yaxis_title="",
-                                        legend_title_text="",
-                                        legend=dict(
-                                            orientation="h", yanchor="top",
-                                            y=-0.25, xanchor="center", x=0.5
+                                        fig_bar = px.bar(
+                                            df_agg,
+                                            y='Segment Name',
+                                            x=metric_col,
+                                            color='Building Type Tooltip',
+                                            custom_data=['Building Type Tooltip'],
+                                            orientation='h',
+                                            barmode='relative',
+                                            title=f"{eu_lbl}"
                                         )
-                                    )
-                                    fig_bar.update_yaxes(
-                                        categoryorder='total ascending'
-                                    )
-                                    fig_bar.update_xaxes(range=x_range)
 
-                                    bar_div = fig_bar.to_html(
-                                        full_html=False,
-                                        include_plotlyjs=False,
-                                        default_width='100%',
-                                        config={'responsive': True}
-                                    ).replace(
-                                        '<script type="text/javascript">',
-                                        '<script type="text/template" '
-                                        'class="lazy-plotly">'
-                                    )
-                                    row_html += (
-                                        f"<div class='chart-container' "
-                                        f"style='flex: 1 1 45%; "
-                                        f"min-width:300px; background: white; "
-                                        f"padding: 20px; border-radius: 8px; "
-                                        f"box-shadow: 0 2px 4px "
-                                        f"rgba(0,0,0,0.1);'>{bar_div}"
-                                        f"</div>\n"
-                                    )
-                                else:
-                                    row_html += (
-                                        f"<div class='chart-container' "
-                                        f"style='flex: 1 1 45%; "
-                                        f"min-width:300px; background: white; "
-                                        f"padding: 20px; border-radius: 8px; "
-                                        f"box-shadow: 0 2px 4px "
-                                        f"rgba(0,0,0,0.1); display:flex; "
-                                        f"align-items:center; "
-                                        f"justify-content:center;'>"
-                                        f"<p style='color:#57606a;'>"
-                                        f"No {eu_lbl} data</p></div>\n"
-                                    )
+                                        ht_split = (
+                                            "Component: %{y}<br>"
+                                            "Building Type: %{customdata[0]}<br>"
+                                            f"{metric_col}: "
+                                            "%{x:,.1f}<extra></extra>"
+                                        )
 
-                            row_html += "</div>\n"
-                    row_html += "</div>\n"
+                                        fig_bar.update_traces(
+                                            hovertemplate=ht_split
+                                        )
+
+                                        # Add total labels at the end of each bar
+                                        agg_totals = df_agg.groupby(
+                                            'Segment Name')[metric_col].sum().reset_index()
+                                        for _, r_tot in agg_totals.iterrows():
+                                            net_val = r_tot[metric_col]
+                                            seg_data = df_agg[
+                                                df_agg['Segment Name'] == r_tot[
+                                                    'Segment Name']][metric_col]
+                                            if net_val >= 0:
+                                                edge_val = seg_data[seg_data > 0].sum() if (
+                                                    seg_data > 0).any() else 0
+                                                xanchor = 'left'
+                                                xshift = 5
+                                            else:
+                                                edge_val = seg_data[seg_data < 0].sum() if (
+                                                    seg_data < 0).any() else 0
+                                                xanchor = 'right'
+                                                xshift = -5
+
+                                            fig_bar.add_annotation(
+                                                x=edge_val, y=r_tot['Segment Name'],
+                                                text=f"<b>{net_val:,.1f}</b>",
+                                                showarrow=False, xanchor=xanchor, xshift=xshift,
+                                                font=dict(
+                                                    family=GITHUB_FONT, size=11, color='#24292f')
+                                            )
+
+                                        fig_bar.update_layout(
+                                            font=dict(family=GITHUB_FONT),
+                                            margin=dict(t=40, l=0, r=0, b=80),
+                                            autosize=True, height=450,
+                                            xaxis_title=metric_col,
+                                            yaxis_title="",
+                                            legend_title_text="",
+                                            legend=dict(
+                                                orientation="h", yanchor="top",
+                                                y=-0.25, xanchor="center", x=0.5
+                                            )
+                                        )
+                                        fig_bar.update_yaxes(
+                                            categoryorder='total ascending'
+                                        )
+                                        fig_bar.update_xaxes(range=x_range)
+
+                                        bar_div = fig_bar.to_html(
+                                            full_html=False,
+                                            include_plotlyjs=False,
+                                            default_width='100%',
+                                            config={'responsive': True}
+                                        ).replace(
+                                            '<script type="text/javascript">',
+                                            '<script type="text/template" '
+                                            'class="lazy-plotly">'
+                                        )
+                                        row_html += (
+                                            f"<div class='chart-container' "
+                                            f"style='flex: 1 1 45%; "
+                                            f"min-width:300px; background: white; "
+                                            f"padding: 20px; border-radius: 8px; "
+                                            f"box-shadow: 0 2px 4px "
+                                            f"rgba(0,0,0,0.1);'>{bar_div}"
+                                            f"</div>\n"
+                                        )
+                                    else:
+                                        row_html += (
+                                            f"<div class='chart-container' "
+                                            f"style='flex: 1 1 45%; "
+                                            f"min-width:300px; background: white; "
+                                            f"padding: 20px; border-radius: 8px; "
+                                            f"box-shadow: 0 2px 4px "
+                                            f"rgba(0,0,0,0.1); display:flex; "
+                                            f"align-items:center; "
+                                            f"justify-content:center;'>"
+                                            f"<p style='color:#57606a;'>"
+                                            f"No {eu_lbl} data</p></div>\n"
+                                        )
+
+                                row_html += "</div>\n"
+                        row_html += "</div>\n"
 
                     # --- COMBINED VIEW (NET IMPACT) ---
                     disp_comb = 'flex' if year == 2026 else 'none'
@@ -1588,7 +1652,9 @@ def generate_sunburst_row(
                             if not n_sum.empty:
                                 min_c = min(min_c, n_sum.min())
 
-                    x_range_c = [min_c * 1.1, max_c * 1.1]
+                    range_span_c = max_c - min_c
+                    pad_c = range_span_c * 0.25 if range_span_c != 0 else 1
+                    x_range_c = [min_c - pad_c, max_c + pad_c]
                     if x_range_c[0] == 0 and x_range_c[1] == 0:
                         x_range_c = [-1, 1]
 
@@ -1621,6 +1687,31 @@ def generate_sunburst_row(
                             )
 
                             fig_bar.update_traces(hovertemplate=ht_comb)
+
+                            # Add total labels at the end of each bar
+                            agg_totals = df_agg.groupby(
+                                'Segment Name')[metric_col].sum().reset_index()
+                            for _, r_tot in agg_totals.iterrows():
+                                net_val = r_tot[metric_col]
+                                seg_data = df_agg[df_agg[
+                                    'Segment Name'] == r_tot['Segment Name']][metric_col]
+                                if net_val >= 0:
+                                    edge_val = seg_data[
+                                        seg_data > 0].sum() if (seg_data > 0).any() else 0
+                                    xanchor = 'left'
+                                    xshift = 5
+                                else:
+                                    edge_val = seg_data[
+                                        seg_data < 0].sum() if (seg_data < 0).any() else 0
+                                    xanchor = 'right'
+                                    xshift = -5
+
+                                fig_bar.add_annotation(
+                                    x=edge_val, y=r_tot['Segment Name'],
+                                    text=f"<b>{net_val:,.1f}</b>",
+                                    showarrow=False, xanchor=xanchor, xshift=xshift,
+                                    font=dict(family=GITHUB_FONT, size=11, color='#24292f')
+                                )
 
                             fig_bar.update_layout(
                                 font=dict(family=GITHUB_FONT),
