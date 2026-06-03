@@ -1272,11 +1272,11 @@ def generate_navbar_html(divisions_dict):
 
 def generate_sunburst_row(
     df_subset, metric_col, path_cols, alt_path_cols,
-    color_dict=None, tooltip_mapping=None
+    color_dict=None, tooltip_mapping_by_col=None
 ):
     """Generates Multi-Filtered Sunbursts, grouped with Segmented Toggles."""
-    if tooltip_mapping is None:
-        tooltip_mapping = {}
+    if tooltip_mapping_by_col is None:
+        tooltip_mapping_by_col = {}
 
     years = [2026, 2035, 2050]
 
@@ -1335,10 +1335,19 @@ def generate_sunburst_row(
                 title=f"Year {year}: {total_val:,.1f}{unit_str}"
             )
 
-            mapped_hover_text = [
-                [tooltip_mapping.get(label, label)]
-                for label in fig.data[0].labels
-            ]
+            mapped_hover_text = []
+            for i, label in enumerate(fig.data[0].labels):
+                node_id = fig.data[0].ids[i]
+                parts = str(node_id).split('/')
+                col_idx = len(parts) - 1
+
+                if col_idx >= 0 and col_idx < len(current_path):
+                    col_name = current_path[col_idx]
+                    tooltip = tooltip_mapping_by_col.get(col_name, {}).get(label, label)
+                else:
+                    tooltip = label
+
+                mapped_hover_text.append([tooltip])
 
             fig.update_traces(
                 customdata=mapped_hover_text,
@@ -1490,8 +1499,6 @@ def generate_sunburst_row(
                                 range_span = max_x - min_x
                                 pad = range_span * 0.25 if range_span != 0 else 1
                                 x_range = [min_x - pad, max_x + pad]
-                                if x_range[0] == 0 and x_range[1] == 0:
-                                    x_range = [-1, 1]
 
                                 row_html += (
                                     f"<h3 style='text-align:center; "
@@ -1655,8 +1662,6 @@ def generate_sunburst_row(
                     range_span_c = max_c - min_c
                     pad_c = range_span_c * 0.25 if range_span_c != 0 else 1
                     x_range_c = [min_c - pad_c, max_c + pad_c]
-                    if x_range_c[0] == 0 and x_range_c[1] == 0:
-                        x_range_c = [-1, 1]
 
                     for s_name, s_df in [
                         ("Residential", df_res), ("Commercial", df_com)
@@ -1898,7 +1903,7 @@ def main():
     ]
 
     # Dynamically build the tooltip mapping dictionary based on real CSV keys
-    tooltip_mapping = {}
+    tooltip_mapping_by_col = {}
     if not df.empty:
         pairs = [
             ('Fuel Type', 'Fuel Type Tooltip'),
@@ -1908,11 +1913,12 @@ def main():
             ('Vintage', 'Vintage Tooltip')
         ]
         for short_col, long_col in pairs:
+            tooltip_mapping_by_col[short_col] = {}
             if short_col in df.columns and long_col in df.columns:
                 for s, l in zip(df[short_col], df[long_col]):
-                    tooltip_mapping[str(s)] = str(l)
+                    tooltip_mapping_by_col[short_col][str(s)] = str(l)
                     # Map the `<br>` replaced version exactly as Plotly sees it
-                    tooltip_mapping[str(s).replace(' ', '<br>')] = str(l)
+                    tooltip_mapping_by_col[short_col][str(s).replace(' ', '<br>')] = str(l)
 
     std_colors = {
         'Elec.': '#19D3F3',
@@ -1927,19 +1933,19 @@ def main():
     def build_page_html(data_slice, page_title):
         html_eng = generate_sunburst_row(
             data_slice, 'Site Energy Use (TBtu)', std_path, alt_path,
-            std_colors, tooltip_mapping
+            std_colors, tooltip_mapping_by_col
         )
         html_emi = generate_sunburst_row(
             data_slice, 'Emissions (CO2e)', std_path, alt_path,
-            std_colors, tooltip_mapping
+            std_colors, tooltip_mapping_by_col
         )
         html_cap = generate_sunburst_row(
             data_slice, 'Capital Costs (Bn.$)', std_path, alt_path,
-            std_colors, tooltip_mapping
+            std_colors, tooltip_mapping_by_col
         )
         html_enc = generate_sunburst_row(
             data_slice, 'Energy Costs (Bn.$)', std_path, alt_path,
-            std_colors, tooltip_mapping
+            std_colors, tooltip_mapping_by_col
         )
 
         # For Peak Demand we want Electricity for equipment,
@@ -1956,11 +1962,11 @@ def main():
 
         html_summer_peak = generate_sunburst_row(
             peak_df, 'Peak Demand, Summer (GW)', peak_path, alt_peak_path,
-            std_colors, tooltip_mapping
+            std_colors, tooltip_mapping_by_col
         )
         html_winter_peak = generate_sunburst_row(
             peak_df, 'Peak Demand, Winter (GW)', peak_path, alt_peak_path,
-            std_colors, tooltip_mapping
+            std_colors, tooltip_mapping_by_col
         )
 
         return HTML_TEMPLATE.format(
