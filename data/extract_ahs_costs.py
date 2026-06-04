@@ -94,11 +94,10 @@ def extract_capital_costs():
 
     # --- 4. Filter for Specific Jobs ---
     target_jobs = [
-        11, 12, 13, 14,  # Envelope (Roof, Siding, Doors/Windows, Insulation)
+        11, 12, 13, 14,  # Envelope (Roof, Siding, Windows/Doors, Insulation)
         21, 22,          # HVAC (Central AC, Heating Equipment)
-        31, 32,          # Plumbing (Pipes, Water Heater)
-        33,              # Electrical Wiring
-        43               # Major Appliances
+        32,              # Water Heaters (Removed 31: General Plumbing)
+        43               # Major Appliances (Removed 33: General Electrical)
     ]
 
     filtered_imp = imp_df[imp_df['JOBTYPE'].isin(target_jobs)].copy()

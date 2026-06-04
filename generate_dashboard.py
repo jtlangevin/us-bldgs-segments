@@ -255,6 +255,16 @@ HTML_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
     <title>US Buildings Energy Dashboard - {page_title}</title>
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-K7XJSGS9GG"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){{dataLayer.push(arguments);}}
+      gtag('js', new Date());
+
+      gtag('config', 'G-K7XJSGS9GG');
+    </script>
+
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
     <style>{css_styles}</style>
 </head>
@@ -532,6 +542,16 @@ INDEX_TEMPLATE = """<!DOCTYPE html>
 <html>
 <head>
     <title>US Buildings Dashboard - Home</title>
+
+    <script async src="https://www.googletagmanager.com/gtag/js?id=G-K7XJSGS9GG"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){{dataLayer.push(arguments);}}
+      gtag('js', new Date());
+
+      gtag('config', 'G-K7XJSGS9GG');
+    </script>
+
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
     <style>{css_styles}</style>
 </head>
@@ -2094,7 +2114,7 @@ def main():
         title_cap = (
             f"2023 Capital Costs: {tot_cap_bn:,.1f} Bn.$<br>"
             f"<span style='font-size:12px; font-weight:normal;'>"
-            f"*Equipment replacements only.</span>"
+            f"*Annual equipment and envelope upgrades.</span>"
         )
         title_enc = f"{seds_year} Energy Cost: {tot_enc_bn:,.1f} Bn.$"
 
