@@ -303,6 +303,15 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             </button>
         </div>
 
+        <p style="text-align: center; font-size: 13px; color: #57606a; margin-top: -15px;
+            margin-bottom: 30px;"> All projections are drawn from the
+            <a href="https://github.com/scout-bto/scout/tree/pathways-v2" target="_blank"
+            style="color: #0969da; text-decoration: none;">
+            Scout baseline</a> and reflect the <a href="https://www.eia.gov/outlooks/archive/aeo25/
+            " target="_blank" style="color: #0969da; text-decoration: none;">Annual Energy
+            Outlook 2025 Reference Case forecast</a>.
+        </p>
+
         <div class="tabs-wrapper fade-in-section">
             <div id="Energy" class="tab-content">
                 <h2 style="text-align: center; font-weight: 400;">
@@ -2098,50 +2107,66 @@ def main():
         tot_cap_bn = map_df_all['Capital_Cost_M$'].sum() / 1000
         tot_enc_bn = map_df_all['Energy_Cost_M$'].sum() / 1000
 
+        # Build Source Attributions (Clean formatting, contiguous strings)
+        s_seds = (
+            "<span style='font-size:11px; font-weight:normal; color:#6e7781;'>Source: "
+            "<a href='https://www.eia.gov/state/seds/' target='_blank' style='color:#0969da; "
+            "text-decoration:none;'>EIA State Energy Data System</a></span>")
+        s_ahs = (
+            "<span style='font-size:11px; font-weight:normal; color:#6e7781;'>Source: "
+            "<a href='https://www.census.gov/programs-surveys/ahs/data/2023/ahs-2023-public-use-"
+            "file--puf-/ahs-2023-national-public-use-file--puf-.html' target='_blank' "
+            "style='color:#0969da; text-decoration:none;'>American Housing Survey</a></span>")
+        s_peak = (
+            "<span style='font-size:11px; font-weight:normal; color:#6e7781;'>Source: "
+            "<a href='https://www.eia.gov/electricity/data/eia861/' target='_blank' "
+            "style='color:#0969da; text-decoration:none;'>EIA-861</a></span>")
+
         # Build Map Titles
-        title_eng = f"{seds_year} Site Energy Use: {tot_eng:,.0f} TBtu"
+        title_eng = f"{seds_year} Site Energy Use: {tot_eng:,.0f} TBtu<br>{s_seds}"
         title_summer_peak = (
             f"{peak_year} Summer Peak: {tot_summer_peak:,.0f} GW<br>"
             f"<span style='font-size:12px; font-weight:normal;'>"
-            f"*Total system peak demand.</span>"
+            f"*Total system peak demand.</span><br>{s_peak}"
         )
         title_winter_peak = (
             f"{peak_year} Winter Peak: {tot_winter_peak:,.0f} GW<br>"
             f"<span style='font-size:12px; font-weight:normal;'>"
-            f"*Total system peak demand.</span>"
+            f"*Total system peak demand.</span><br>{s_peak}"
         )
-        title_emi = f"{seds_year} Emissions: {tot_emi:,.0f} MMTCO2e"
+        title_emi = f"{seds_year} Emissions: {tot_emi:,.0f} MMTCO2e<br>{s_seds}"
         title_cap = (
             f"2023 Capital Costs: {tot_cap_bn:,.1f} Bn.$<br>"
             f"<span style='font-size:12px; font-weight:normal;'>"
-            f"*Annual equipment and envelope upgrades.</span>"
+            f"*Annual equipment and envelope upgrades.</span><br>{s_ahs}"
         )
-        title_enc = f"{seds_year} Energy Cost: {tot_enc_bn:,.1f} Bn.$"
+        title_enc = f"{seds_year} Energy Cost: {tot_enc_bn:,.1f} Bn.$<br>{s_seds}"
 
         # Build Per Capita Map Titles
         title_eng_pc = (
-            f"{seds_year} Site Energy Use (MMBtu/Capita)"
+            f"{seds_year} Site Energy Use (MMBtu/Capita)<br>{s_seds}"
         )
         title_summer_peak_pc = (
             f"{peak_year} Summer Peak (kW/Capita)<br>"
             f"<span style='font-size:12px; font-weight:normal;'>"
-            f"*Total system peak demand.</span>"
+            f"*Total system peak demand.</span><br>{s_peak}"
         )
         title_winter_peak_pc = (
             f"{peak_year} Winter Peak (kW/Capita)<br>"
             f"<span style='font-size:12px; font-weight:normal;'>"
-            f"*Total system peak demand.</span>"
+            f"*Total system peak demand.</span><br>{s_peak}"
         )
         title_emi_pc = (
-            f"{seds_year} Emissions (MTCO2e/Capita)"
+            f"{seds_year} Emissions (MTCO2e/Capita)<br>{s_seds}"
         )
         title_cap_pc = (
             "2023 Capital Costs ($/Capita)<br>"
             "<span style='font-size:12px; font-weight:normal;'>"
-            "Equipment replacements only.</span>"
+            "Equipment replacements only.</span><br>"
+            f"{s_ahs}"
         )
         title_enc_pc = (
-            f"{seds_year} Energy Cost ($/Capita)"
+            f"{seds_year} Energy Cost ($/Capita)<br>{s_seds}"
         )
 
         map_eng = generate_map_panel(
