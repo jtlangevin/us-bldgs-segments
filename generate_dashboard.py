@@ -304,12 +304,13 @@ HTML_TEMPLATE = """<!DOCTYPE html>
         </div>
 
         <p style="text-align: center; font-size: 13px; color: #57606a; margin-top: -15px;
-            margin-bottom: 30px;"> All projections are drawn from the
-            <a href="https://github.com/scout-bto/scout/tree/pathways-v2" target="_blank"
-            style="color: #0969da; text-decoration: none;">
-            Scout baseline</a> and reflect the <a href="https://www.eia.gov/outlooks/archive/aeo25/
-            " target="_blank" style="color: #0969da; text-decoration: none;">Annual Energy
-            Outlook 2025 Reference Case forecast</a>.
+        margin-bottom: 30px;">
+            All projections are drawn from the
+            <a href="https://github.com/scout-bto/scout/tree/pathways-2026"
+            target="_blank" style="color: #0969da; text-decoration: none;">Scout baseline</a>
+            and reflect the <a href="https://www.eia.gov/outlooks/aeo/"
+            target="_blank" style="color: #0969da; text-decoration: none;
+            ">Annual Energy Outlook 2026 Reference Case forecast</a>.
         </p>
 
         <div class="tabs-wrapper fade-in-section">
@@ -383,10 +384,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 '.tab-content.active .active-layer script.lazy-plotly'
             );
             activeScripts.forEach(template => {{
-                // Skip if the Thermal Loads toggle is OFF
-                const wrapper = template.closest('[id^="thermal-wrapper-"]');
-                if (wrapper && wrapper.style.display === 'none') return;
-
                 // Skip if hidden by the Year/Combined filters
                 const plotContainer = template.closest(
                     '.thermal-plot-container'
@@ -410,9 +407,6 @@ HTML_TEMPLATE = """<!DOCTYPE html>
                 document.querySelectorAll(
                     '.tab-content.active .active-layer .plotly-graph-div'
                 ).forEach(plot => {{
-                    const wrapper = plot.closest('[id^="thermal-wrapper-"]');
-                    if (wrapper && wrapper.style.display === 'none') return;
-
                     const plotContainer = plot.closest(
                         '.thermal-plot-container'
                     );
@@ -477,15 +471,14 @@ HTML_TEMPLATE = """<!DOCTYPE html>
             renderVisibleCharts();
         }}
 
-        function toggleThermalLoads(element, isShow) {{
-            const tab = element.closest('.tab-content');
+        function scrollToThermal(el) {{
+            const tab = el.closest('.tab-content');
             if (!tab) return;
-            const wrappers = tab.querySelectorAll('[id^="thermal-wrapper-"]');
-            wrappers.forEach(w => {{
-                w.style.display = isShow ? 'flex' : 'none';
-            }});
-            if (isShow) {{
-                renderVisibleCharts();
+            const activeLayer = tab.querySelector('.active-layer');
+            if (!activeLayer) return;
+            const thermalWrapper = activeLayer.querySelector('[id^="thermal-wrapper-"]');
+            if (thermalWrapper) {{
+                thermalWrapper.scrollIntoView({{behavior: 'smooth', block: 'start'}});
             }}
         }}
 
@@ -1409,7 +1402,7 @@ def generate_sunburst_row(
         if not df_env.empty and (df_env[metric_col] != 0).any():
             row_html += (
                 f"<div id='thermal-wrapper-{view_id}' "
-                f"style='display: none; flex-direction: column; "
+                f"style='display: flex; flex-direction: column; "
                 f"width: 100%;'>\n"
                 f"<h2 style='text-align:center; font-weight:400; "
                 f"margin-top:40px; margin-bottom:10px;'>"
@@ -1882,20 +1875,27 @@ def generate_sunburst_row(
         f"            <label for='unk-exc-{tab_id}'>Exclude</label>\n"
         "        </div>\n"
         "    </div>\n"
-        "    <div style='display: flex; align-items: center; gap: 8px;'>\n"
-        "        <span class='toggle-label'>Thermal Load "
-        "Components:</span>\n"
-        "        <div class='segmented-control'>\n"
-        f"            <input type='radio' id='therm-hide-{tab_id}' "
-        f"name='therm-toggle-{tab_id}' value='hide' checked "
-        "onchange=\"toggleThermalLoads(this, false)\">\n"
-        f"            <label for='therm-hide-{tab_id}'>Hide</label>\n"
-        f"            <input type='radio' id='therm-show-{tab_id}' "
-        f"name='therm-toggle-{tab_id}' value='show' "
-        "onchange=\"toggleThermalLoads(this, true)\">\n"
-        f"            <label for='therm-show-{tab_id}'>Show</label>\n"
-        "        </div>\n"
-        "    </div>\n"
+    )
+
+    # Conditionally add the "View Thermal Loads" link
+    has_thermal = False
+    if 'Envelope Flag' in df_subset.columns:
+        if not df_subset[df_subset['Envelope Flag'] == 'envelope'].empty:
+            has_thermal = True
+
+    if has_thermal:
+        combined_html += (
+            "    <div style='display: flex; align-items: center; "
+            "gap: 8px; margin-left: 10px;'>\n"
+            "        <a href='javascript:void(0);' "
+            "onclick='scrollToThermal(this)' "
+            "style='color: #0969da; font-weight: 600; font-size: 14px; "
+            "text-decoration: none;'>\n"
+            "        View Thermal Loads ↓</a>\n"
+            "    </div>\n"
+        )
+
+    combined_html += (
         "</div>\n"
         "<div class='stack-grid'>\n"
         f"{html_combinations}\n"
